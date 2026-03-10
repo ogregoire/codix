@@ -202,9 +202,13 @@ impl Store for SqliteStore {
     }
 
     fn resolve_relationships(&self) -> Result<u64> {
+        // First try exact match on qualified_name, then fall back to simple name match.
+        // This handles the case where the Java plugin emits "Repository" but the
+        // symbol's qualified_name is "com.foo.Repository".
         let count = self.conn.execute(
-            "UPDATE relationships SET target_symbol_id = (
-                SELECT id FROM symbols WHERE qualified_name = relationships.target_qualified_name
+            "UPDATE relationships SET target_symbol_id = COALESCE(
+                (SELECT id FROM symbols WHERE qualified_name = relationships.target_qualified_name LIMIT 1),
+                (SELECT id FROM symbols WHERE name = relationships.target_qualified_name LIMIT 1)
              ) WHERE target_symbol_id IS NULL",
             [],
         )?;

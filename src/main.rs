@@ -76,7 +76,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 fn cmd_init() -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     project::init_project(&cwd)?;
+    let store = SqliteStore::open(project::db_path(&cwd).to_str().unwrap())?;
+    let registry = PluginRegistry::new();
+    let count = indexer::full_index(&cwd, &store, &registry)?;
     println!("Initialized codix project in {}", cwd.display());
+    println!("Indexed {} files.", count);
     Ok(())
 }
 
