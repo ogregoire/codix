@@ -11,8 +11,8 @@
 
 ## Method Call Resolution
 
-- [ ] Improve method call resolution beyond simple name matching — use field types and imports to narrow down which method is being called
-- [ ] Track receiver type for method invocations (e.g. `repo.save()` → resolve `repo` field type to find `Repository.save()`)
+- [x] Improve method call resolution beyond simple name matching — use field types and imports to narrow down which method is being called
+- [x] Track receiver type for method invocations (e.g. `repo.save()` → resolve `repo` field type to find `Repository.save()`)
 
 ## Language Support
 
@@ -33,7 +33,7 @@
 - [ ] Track annotation usage as relationships
 - [ ] Track generic type parameters
 - [ ] Handle `throws` clause on methods
-- [ ] Extract return types and parameter types as relationships
+- [x] Extract return types and parameter types as relationships
 
 ## CLI Improvements
 

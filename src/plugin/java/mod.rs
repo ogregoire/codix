@@ -34,6 +34,8 @@ impl LanguagePlugin for JavaPlugin {
         // Find package declaration
         let package = find_package(root, source);
 
+        let (import_map, wildcard_imports) = parse_imports(root, source);
+
         // Walk top-level children for type declarations
         let mut cursor = root.walk();
         for child in root.children(&mut cursor) {
@@ -44,11 +46,9 @@ impl LanguagePlugin for JavaPlugin {
                 symbols.push(type_symbol);
 
                 // Extract members from the class body
-                extract_members(child, source, &type_qualified_name, &type_package, type_local_id, &mut symbols);
+                extract_members(child, source, &type_qualified_name, &type_package, type_local_id, &import_map, &mut symbols);
             }
         }
-
-        let (import_map, wildcard_imports) = parse_imports(root, source);
 
         let mut relationships = Vec::new();
 
@@ -192,6 +192,7 @@ fn extract_type_declaration(
         end_column: end.column as i64,
         parent_local_id: None,
         package: package.to_string(),
+        type_text: None,
     })
 }
 
@@ -201,6 +202,7 @@ fn extract_members(
     parent_qualified_name: &str,
     package: &str,
     parent_local_id: usize,
+    import_map: &HashMap<String, String>,
     symbols: &mut Vec<ExtractedSymbol>,
 ) {
     let body_kind = match type_node.kind() {
@@ -217,9 +219,9 @@ fn extract_members(
             for member in child.children(&mut body_cursor) {
                 let local_id = symbols.len();
                 let maybe_symbol = match member.kind() {
-                    "method_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Method),
-                    "constructor_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Constructor),
-                    "field_declaration" => extract_field(member, source, parent_qualified_name, package, parent_local_id, local_id),
+                    "method_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Method, import_map),
+                    "constructor_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Constructor, import_map),
+                    "field_declaration" => extract_field(member, source, parent_qualified_name, package, parent_local_id, local_id, import_map),
                     _ => None,
                 };
                 if let Some(symbol) = maybe_symbol {
@@ -264,6 +266,7 @@ fn extract_method(
     parent_local_id: usize,
     local_id: usize,
     kind: SymbolKind,
+    import_map: &HashMap<String, String>,
 ) -> Option<ExtractedSymbol> {
     let name = node
         .child_by_field_name("name")
@@ -289,6 +292,12 @@ fn extract_method(
     let signature = format!("{}({})", name, param_types);
     let qualified_name = format!("{}.{}", parent_qualified_name, signature);
 
+    let type_text = if kind == SymbolKind::Constructor {
+        None
+    } else {
+        method_return_type(node, source).map(|t| resolve_type_name(&t, import_map, package))
+    };
+
     Some(ExtractedSymbol {
         local_id,
         name,
@@ -302,6 +311,7 @@ fn extract_method(
         end_column: end.column as i64,
         parent_local_id: Some(parent_local_id),
         package: package.to_string(),
+        type_text,
     })
 }
 
@@ -312,6 +322,7 @@ fn extract_field(
     package: &str,
     parent_local_id: usize,
     local_id: usize,
+    import_map: &HashMap<String, String>,
 ) -> Option<ExtractedSymbol> {
     let mut name = None;
     let mut cursor = node.walk();
@@ -331,6 +342,9 @@ fn extract_field(
     let end = node.end_position();
     let qualified_name = format!("{}.{}", parent_qualified_name, name);
 
+    let type_text = field_type_name(node, source)
+        .map(|t| resolve_type_name(&t, import_map, package));
+
     Some(ExtractedSymbol {
         local_id,
         name,
@@ -344,6 +358,7 @@ fn extract_field(
         end_column: end.column as i64,
         parent_local_id: Some(parent_local_id),
         package: package.to_string(),
+        type_text,
     })
 }
 
@@ -379,7 +394,11 @@ fn extract_type_relationships(
                 collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships, import_map, package);
             }
             "class_body" | "interface_body" => {
-                extract_body_relationships(child, source, type_local_id, symbols, relationships, import_map, package);
+                let type_qn = symbols.iter()
+                    .find(|s| s.local_id == type_local_id)
+                    .map(|s| s.qualified_name.as_str())
+                    .unwrap_or("");
+                extract_body_relationships(child, source, type_local_id, type_qn, symbols, relationships, import_map, package);
             }
             _ => {}
         }
@@ -446,23 +465,30 @@ fn extract_body_relationships(
     body_node: tree_sitter::Node,
     source: &[u8],
     type_local_id: usize,
+    type_qualified_name: &str,
     symbols: &[ExtractedSymbol],
     relationships: &mut Vec<ExtractedRelationship>,
     import_map: &HashMap<String, String>,
     package: &str,
 ) {
+    // Build field scope: name -> qualified type
+    let mut field_scope: HashMap<String, String> = HashMap::new();
+    for sym in symbols.iter().filter(|s| s.kind == SymbolKind::Field && s.parent_local_id == Some(type_local_id)) {
+        if let Some(ref tt) = sym.type_text {
+            field_scope.insert(sym.name.clone(), tt.clone());
+        }
+    }
+
     let mut cursor = body_node.walk();
     for member in body_node.children(&mut cursor) {
         match member.kind() {
             "field_declaration" => {
-                // Find the field symbol's local_id
                 let field_local_id = symbols.iter()
                     .find(|s| s.kind == SymbolKind::Field && s.parent_local_id == Some(type_local_id)
                         && s.line == (member.start_position().row + 1) as i64)
                     .map(|s| s.local_id)
                     .unwrap_or(type_local_id);
 
-                // Extract the type of the field
                 if let Some(type_name) = field_type_name(member, source) {
                     let resolved = resolve_type_name(&type_name, import_map, package);
                     relationships.push(ExtractedRelationship {
@@ -480,7 +506,14 @@ fn extract_body_relationships(
                     .map(|s| s.local_id)
                     .unwrap_or(type_local_id);
 
-                extract_method_calls(member, source, method_local_id, relationships);
+                // Build scope for this method: fields + params + this
+                let mut scope = field_scope.clone();
+                for (name, qtype) in extract_method_params(member, source, import_map, package) {
+                    scope.insert(name, qtype);
+                }
+                scope.insert("this".to_string(), type_qualified_name.to_string());
+
+                collect_method_invocations(member, source, method_local_id, relationships, &scope, type_qualified_name);
             }
             _ => {}
         }
@@ -506,13 +539,61 @@ fn field_type_name(field_node: tree_sitter::Node, source: &[u8]) -> Option<Strin
     None
 }
 
-fn extract_method_calls(
-    method_node: tree_sitter::Node,
-    source: &[u8],
-    method_local_id: usize,
-    relationships: &mut Vec<ExtractedRelationship>,
-) {
-    collect_method_invocations(method_node, source, method_local_id, relationships);
+fn method_return_type(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "void_type" => return None,
+            "type_identifier" | "generic_type" | "array_type" => {
+                return child.utf8_text(source).ok().map(|s| {
+                    let base = s.split('<').next().unwrap_or(s);
+                    base.to_string()
+                });
+            }
+            "integral_type" | "floating_point_type" | "boolean_type" => return None,
+            _ => continue,
+        }
+    }
+    None
+}
+
+fn extract_method_params(method_node: tree_sitter::Node, source: &[u8], import_map: &HashMap<String, String>, package: &str) -> Vec<(String, String)> {
+    let mut params = Vec::new();
+    let mut cursor = method_node.walk();
+    for child in method_node.children(&mut cursor) {
+        if child.kind() == "formal_parameters" {
+            let mut param_cursor = child.walk();
+            for param in child.children(&mut param_cursor) {
+                if param.kind() == "formal_parameter" || param.kind() == "spread_parameter" {
+                    let mut type_name = None;
+                    let mut param_name = None;
+                    let mut inner = param.walk();
+                    for pc in param.children(&mut inner) {
+                        match pc.kind() {
+                            "modifiers" => continue,
+                            "identifier" => {
+                                param_name = pc.utf8_text(source).ok().map(|s| s.to_string());
+                            }
+                            _ if pc.is_named() && pc.kind() != "identifier" => {
+                                if type_name.is_none() {
+                                    type_name = pc.utf8_text(source).ok().map(|s| {
+                                        let base = s.split('<').next().unwrap_or(s);
+                                        base.to_string()
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let (Some(t), Some(n)) = (type_name, param_name) {
+                        let resolved = resolve_type_name(&t, import_map, package);
+                        params.push((n, resolved));
+                    }
+                }
+            }
+        }
+    }
+    params
 }
 
 fn collect_method_invocations(
@@ -520,13 +601,31 @@ fn collect_method_invocations(
     source: &[u8],
     method_local_id: usize,
     relationships: &mut Vec<ExtractedRelationship>,
+    scope: &HashMap<String, String>,
+    enclosing_class: &str,
 ) {
     if node.kind() == "method_invocation" {
         if let Some(name_node) = node.child_by_field_name("name") {
-            if let Ok(name) = name_node.utf8_text(source) {
+            if let Ok(method_name) = name_node.utf8_text(source) {
+                let target = if let Some(obj_node) = node.child_by_field_name("object") {
+                    if let Ok(receiver) = obj_node.utf8_text(source) {
+                        if receiver == "this" {
+                            format!("{}.{}", enclosing_class, method_name)
+                        } else if let Some(receiver_type) = scope.get(receiver) {
+                            format!("{}.{}", receiver_type, method_name)
+                        } else {
+                            method_name.to_string()
+                        }
+                    } else {
+                        method_name.to_string()
+                    }
+                } else {
+                    format!("{}.{}", enclosing_class, method_name)
+                };
+
                 relationships.push(ExtractedRelationship {
                     source_local_id: method_local_id,
-                    target_qualified_name: name.to_string(),
+                    target_qualified_name: target,
                     kind: RelationshipKind::Calls,
                 });
             }
@@ -534,7 +633,7 @@ fn collect_method_invocations(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_method_invocations(child, source, method_local_id, relationships);
+        collect_method_invocations(child, source, method_local_id, relationships, scope, enclosing_class);
     }
 }
 
@@ -771,8 +870,58 @@ mod tests {
     }
 
     #[test]
-    fn test_method_calls_stay_simple() {
-        let source = "package com.bar;\nimport com.foo.Repository;\npublic class Svc {\n  void work() { repo.save(); }\n}";
+    fn test_method_calls_with_import_resolved_receiver() {
+        let source = "package com.bar;\nimport com.foo.Repository;\npublic class Svc {\n  private Repository repo;\n  void work() { repo.save(); }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.foo.Repository.save");
+    }
+
+    #[test]
+    fn test_field_receiver_resolution() {
+        let source = "package com.foo;\nimport com.bar.Repository;\npublic class Svc {\n  private Repository repo;\n  void work() { repo.save(); }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.bar.Repository.save");
+    }
+
+    #[test]
+    fn test_param_receiver_resolution() {
+        let source = "package com.foo;\nimport com.bar.Repository;\npublic class Svc {\n  void work(Repository r) { r.save(); }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.bar.Repository.save");
+    }
+
+    #[test]
+    fn test_this_receiver_resolution() {
+        let source = "package com.foo;\npublic class Svc {\n  void work() { this.save(); }\n  void save() {}\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.foo.Svc.save");
+    }
+
+    #[test]
+    fn test_unqualified_call_resolution() {
+        let source = "package com.foo;\npublic class Svc {\n  void work() { save(); }\n  void save() {}\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.foo.Svc.save");
+    }
+
+    #[test]
+    fn test_unresolved_receiver_stays_simple() {
+        let source = "package com.foo;\npublic class Svc {\n  void work() { unknown.save(); }\n}";
         let result = parse_java(source);
         let calls: Vec<_> = result.relationships.iter()
             .filter(|r| r.kind == RelationshipKind::Calls).collect();
@@ -785,5 +934,37 @@ mod tests {
         let source = "public class Svc extends Base {}";
         let result = parse_java(source);
         assert_eq!(result.relationships[0].target_qualified_name, "Base");
+    }
+
+    #[test]
+    fn test_field_type_text() {
+        let source = "package com.foo;\nimport com.bar.Repository;\npublic class Svc {\n  private Repository repo;\n}";
+        let result = parse_java(source);
+        let field = result.symbols.iter().find(|s| s.kind == SymbolKind::Field).unwrap();
+        assert_eq!(field.type_text, Some("com.bar.Repository".to_string()));
+    }
+
+    #[test]
+    fn test_method_return_type_text() {
+        let source = "package com.foo;\nimport com.bar.Person;\npublic class Svc {\n  public Person findById(int id) { return null; }\n}";
+        let result = parse_java(source);
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        assert_eq!(method.type_text, Some("com.bar.Person".to_string()));
+    }
+
+    #[test]
+    fn test_void_method_type_text_is_none() {
+        let source = "package com.foo;\npublic class Svc {\n  public void save() {}\n}";
+        let result = parse_java(source);
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        assert_eq!(method.type_text, None);
+    }
+
+    #[test]
+    fn test_constructor_type_text_is_none() {
+        let source = "package com.foo;\npublic class Svc {\n  public Svc() {}\n}";
+        let result = parse_java(source);
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        assert_eq!(ctor.type_text, None);
     }
 }

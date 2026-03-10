@@ -290,6 +290,61 @@ fn test_same_package_implicit_resolution() {
     assert!(stdout.contains("Client"), "Client should reference Person via extends");
 }
 
+fn setup_method_call_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src/foo")).unwrap();
+    fs::write(
+        dir.join("src/foo/Repository.java"),
+        r#"package com.foo;
+public interface Repository {
+    void save(Object o);
+    Object findById(int id);
+}
+"#,
+    ).unwrap();
+
+    fs::create_dir_all(dir.join("src/bar")).unwrap();
+    fs::write(
+        dir.join("src/bar/Service.java"),
+        r#"package com.bar;
+import com.foo.Repository;
+public class Service {
+    private Repository repo;
+    public void doWork() {
+        repo.save(null);
+    }
+}
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_callers_with_receiver_resolution() {
+    let tmp = TempDir::new().unwrap();
+    setup_method_call_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["callers", "com.foo.Repository.save*"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("doWork"), "doWork should be a caller of Repository.save");
+}
+
+#[test]
+fn test_callees_with_receiver_resolution() {
+    let tmp = TempDir::new().unwrap();
+    setup_method_call_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["callees", "com.bar.Service.doWork*"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("save"), "save should be a callee of doWork");
+}
+
 #[test]
 fn test_help_shows_all_commands() {
     let tmp = TempDir::new().unwrap();

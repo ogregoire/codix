@@ -181,6 +181,7 @@ pub struct ExtractedSymbol {
     pub end_column: i64,
     pub parent_local_id: Option<usize>,
     pub package: String,
+    pub type_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
