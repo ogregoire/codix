@@ -1,0 +1,47 @@
+# TODO
+
+## Import Handling
+
+- [ ] Extract `import` declarations from Java files (both single-type and wildcard imports)
+- [ ] Use imports to resolve simple type names to fully qualified names during relationship extraction (e.g. if a file imports `com.foo.Repository`, then a field typed `Repository` should resolve to `com.foo.Repository` rather than relying on the fallback simple-name match)
+- [ ] Handle `import static` for method call resolution
+- [ ] Handle wildcard imports (`import com.foo.*`) by resolving against known symbols in the package
+
+## Method Call Resolution
+
+- [ ] Improve method call resolution beyond simple name matching — use field types and imports to narrow down which method is being called
+- [ ] Track receiver type for method invocations (e.g. `repo.save()` → resolve `repo` field type to find `Repository.save()`)
+
+## Language Support
+
+- [ ] Add Kotlin plugin
+- [ ] Add TypeScript/JavaScript plugin
+- [ ] Add Python plugin
+- [ ] Add Go plugin
+
+## Ecosystem Plugins
+
+- [ ] Maven plugin (parse `pom.xml` for module structure and dependencies)
+- [ ] Gradle plugin (parse `build.gradle` / `build.gradle.kts`)
+
+## Index Quality
+
+- [ ] Add `.codixignore` support for excluding directories/files
+- [ ] Handle inner/nested classes (currently only top-level types are parents)
+- [ ] Track annotation usage as relationships
+- [ ] Track generic type parameters
+- [ ] Handle `throws` clause on methods
+- [ ] Extract return types and parameter types as relationships
+
+## CLI Improvements
+
+- [ ] Add `--verbose` / `--debug` flag for diagnostics (show what files were reindexed, timing info)
+- [ ] Add `codix status` command (show index stats: file count, symbol count, stale files)
+- [ ] Add `codix tree <symbol>` for transitive dependency graphs
+- [ ] Support multiple patterns in a single query
+
+## Performance
+
+- [ ] Parallel file parsing during indexing (rayon)
+- [ ] Benchmark incremental reindex on large projects (10k+ files)
+- [ ] Consider filesystem watcher as alternative to mtime polling
