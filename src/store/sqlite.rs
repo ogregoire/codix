@@ -108,24 +108,72 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn insert_symbols(&self, _file_id: FileId, _symbols: &[ExtractedSymbol]) -> Result<Vec<SymbolId>> {
-        todo!()
+    fn insert_symbols(&self, file_id: FileId, symbols: &[ExtractedSymbol]) -> Result<Vec<SymbolId>> {
+        // First pass: insert all symbols with parent_symbol_id = NULL, collect local_id -> SymbolId map
+        let mut local_to_real: std::collections::HashMap<usize, SymbolId> = std::collections::HashMap::new();
+        let mut ids: Vec<SymbolId> = Vec::with_capacity(symbols.len());
+        for sym in symbols {
+            self.conn.execute(
+                "INSERT INTO symbols (name, signature, qualified_name, kind, visibility, file_id, line, column_, end_line, end_column, parent_symbol_id, package)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, ?11)",
+                params![
+                    sym.name, sym.signature, sym.qualified_name,
+                    sym.kind.as_str(), sym.visibility.as_str(),
+                    file_id, sym.line, sym.column, sym.end_line, sym.end_column,
+                    sym.package
+                ],
+            )?;
+            let real_id = self.conn.last_insert_rowid();
+            local_to_real.insert(sym.local_id, real_id);
+            ids.push(real_id);
+        }
+        // Second pass: update parent_symbol_id for symbols that have a parent
+        for sym in symbols {
+            if let Some(parent_local_id) = sym.parent_local_id {
+                if let Some(&parent_real_id) = local_to_real.get(&parent_local_id) {
+                    let real_id = local_to_real[&sym.local_id];
+                    self.conn.execute(
+                        "UPDATE symbols SET parent_symbol_id = ?1 WHERE id = ?2",
+                        params![parent_real_id, real_id],
+                    )?;
+                }
+            }
+        }
+        Ok(ids)
     }
 
-    fn delete_symbols_for_file(&self, _file_id: FileId) -> Result<()> {
-        todo!()
+    fn delete_symbols_for_file(&self, file_id: FileId) -> Result<()> {
+        self.conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+        Ok(())
     }
 
-    fn insert_relationships(&self, _file_id: FileId, _symbol_id_map: &[(usize, SymbolId)], _relationships: &[ExtractedRelationship]) -> Result<()> {
-        todo!()
+    fn insert_relationships(&self, file_id: FileId, symbol_id_map: &[(usize, SymbolId)], relationships: &[ExtractedRelationship]) -> Result<()> {
+        let map: std::collections::HashMap<usize, SymbolId> = symbol_id_map.iter().copied().collect();
+        for rel in relationships {
+            if let Some(&source_symbol_id) = map.get(&rel.source_local_id) {
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO relationships (source_symbol_id, target_symbol_id, target_qualified_name, file_id, kind)
+                     VALUES (?1, NULL, ?2, ?3, ?4)",
+                    params![source_symbol_id, rel.target_qualified_name, file_id, rel.kind.as_str()],
+                )?;
+            }
+        }
+        Ok(())
     }
 
-    fn delete_relationships_for_file(&self, _file_id: FileId) -> Result<()> {
-        todo!()
+    fn delete_relationships_for_file(&self, file_id: FileId) -> Result<()> {
+        self.conn.execute("DELETE FROM relationships WHERE file_id = ?1", params![file_id])?;
+        Ok(())
     }
 
     fn resolve_relationships(&self) -> Result<u64> {
-        todo!()
+        let count = self.conn.execute(
+            "UPDATE relationships SET target_symbol_id = (
+                SELECT id FROM symbols WHERE qualified_name = relationships.target_qualified_name
+             ) WHERE target_symbol_id IS NULL",
+            [],
+        )?;
+        Ok(count as u64)
     }
 
     fn find_symbol(&self, _query: &SymbolQuery) -> Result<Vec<Symbol>> {
@@ -161,19 +209,23 @@ impl Store for SqliteStore {
     }
 
     fn begin_transaction(&self) -> Result<()> {
-        todo!()
+        self.conn.execute_batch("BEGIN")?;
+        Ok(())
     }
 
     fn commit_transaction(&self) -> Result<()> {
-        todo!()
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
     }
 
     fn rollback_transaction(&self) -> Result<()> {
-        todo!()
+        self.conn.execute_batch("ROLLBACK")?;
+        Ok(())
     }
 
     fn clear_all(&self) -> Result<()> {
-        todo!()
+        self.conn.execute_batch("DELETE FROM relationships; DELETE FROM symbols; DELETE FROM files;")?;
+        Ok(())
     }
 }
 
@@ -183,6 +235,119 @@ mod tests {
 
     fn test_store() -> SqliteStore {
         SqliteStore::open(":memory:").unwrap()
+    }
+
+    #[test]
+    fn test_insert_and_delete_symbols() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let syms = vec![ExtractedSymbol {
+            local_id: 0,
+            name: "Foo".into(),
+            signature: None,
+            qualified_name: "com.foo.Foo".into(),
+            kind: SymbolKind::Class,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+        }];
+        let ids = store.insert_symbols(fid, &syms).unwrap();
+        assert_eq!(ids.len(), 1);
+
+        store.delete_symbols_for_file(fid).unwrap();
+        // Verify deletion by re-inserting successfully
+        let ids2 = store.insert_symbols(fid, &syms).unwrap();
+        assert_eq!(ids2.len(), 1);
+    }
+
+    #[test]
+    fn test_insert_symbols_with_parent() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let syms = vec![
+            ExtractedSymbol {
+                local_id: 0, name: "Foo".into(), signature: None,
+                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::Class,
+                visibility: Visibility::Public,
+                line: 1, column: 0, end_line: 10, end_column: 1,
+                parent_local_id: None, package: "com.foo".into(),
+            },
+            ExtractedSymbol {
+                local_id: 1, name: "bar".into(), signature: Some("bar(String)".into()),
+                qualified_name: "com.foo.Foo.bar(String)".into(), kind: SymbolKind::Method,
+                visibility: Visibility::Public,
+                line: 3, column: 4, end_line: 5, end_column: 5,
+                parent_local_id: Some(0), package: "com.foo".into(),
+            },
+        ];
+        let ids = store.insert_symbols(fid, &syms).unwrap();
+        assert_eq!(ids.len(), 2);
+    }
+
+    #[test]
+    fn test_insert_and_delete_relationships() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let syms = vec![ExtractedSymbol {
+            local_id: 0, name: "Foo".into(), signature: None,
+            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::Class,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(),
+        }];
+        let ids = store.insert_symbols(fid, &syms).unwrap();
+        let map: Vec<(usize, SymbolId)> = vec![(0, ids[0])];
+        let rels = vec![ExtractedRelationship {
+            source_local_id: 0,
+            target_qualified_name: "com.foo.Bar".into(),
+            kind: RelationshipKind::Extends,
+        }];
+        store.insert_relationships(fid, &map, &rels).unwrap();
+        store.delete_relationships_for_file(fid).unwrap();
+    }
+
+    #[test]
+    fn test_transaction_and_clear() {
+        let store = test_store();
+        store.begin_transaction().unwrap();
+        store.upsert_file("a.java", 1, None, "java").unwrap();
+        store.commit_transaction().unwrap();
+        assert_eq!(store.list_files().unwrap().len(), 1);
+        store.clear_all().unwrap();
+        assert_eq!(store.list_files().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_resolve_relationships() {
+        let store = test_store();
+        let f1 = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let f2 = store.upsert_file("Bar.java", 1, None, "java").unwrap();
+        let syms1 = vec![ExtractedSymbol {
+            local_id: 0, name: "Foo".into(), signature: None,
+            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::Class,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(),
+        }];
+        let ids1 = store.insert_symbols(f1, &syms1).unwrap();
+        let syms2 = vec![ExtractedSymbol {
+            local_id: 0, name: "Bar".into(), signature: None,
+            qualified_name: "com.foo.Bar".into(), kind: SymbolKind::Class,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(),
+        }];
+        store.insert_symbols(f2, &syms2).unwrap();
+        let map: Vec<(usize, SymbolId)> = vec![(0, ids1[0])];
+        let rels = vec![ExtractedRelationship {
+            source_local_id: 0,
+            target_qualified_name: "com.foo.Bar".into(),
+            kind: RelationshipKind::Extends,
+        }];
+        store.insert_relationships(f1, &map, &rels).unwrap();
+        let resolved = store.resolve_relationships().unwrap();
+        assert_eq!(resolved, 1);
     }
 
     #[test]
