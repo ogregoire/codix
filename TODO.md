@@ -2,10 +2,12 @@
 
 ## Import Handling
 
-- [ ] Extract `import` declarations from Java files (both single-type and wildcard imports)
-- [ ] Use imports to resolve simple type names to fully qualified names during relationship extraction (e.g. if a file imports `com.foo.Repository`, then a field typed `Repository` should resolve to `com.foo.Repository` rather than relying on the fallback simple-name match)
+- [x] Extract `import` declarations from Java files (both single-type and wildcard imports)
+- [x] Use imports to resolve simple type names to fully qualified names during relationship extraction
+- [x] Handle wildcard imports (`import com.foo.*`) by resolving against known symbols in the package
+- [x] Same-package implicit resolution (classes in the same package reference each other without imports)
 - [ ] Handle `import static` for method call resolution
-- [ ] Handle wildcard imports (`import com.foo.*`) by resolving against known symbols in the package
+- [ ] Handle `java.lang.*` implicit imports (String, Object, etc.)
 
 ## Method Call Resolution
 

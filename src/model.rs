@@ -194,6 +194,7 @@ pub struct ExtractedRelationship {
 pub struct ExtractionResult {
     pub symbols: Vec<ExtractedSymbol>,
     pub relationships: Vec<ExtractedRelationship>,
+    pub wildcard_imports: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]

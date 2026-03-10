@@ -216,6 +216,80 @@ fn test_full_reindex() {
     assert!(stdout.contains("Indexed"));
 }
 
+fn setup_multi_package_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src/foo")).unwrap();
+    fs::write(
+        dir.join("src/foo/Repository.java"),
+        r#"package com.foo;
+public interface Repository {
+    void save(Object o);
+}
+"#,
+    ).unwrap();
+    fs::write(
+        dir.join("src/foo/Person.java"),
+        r#"package com.foo;
+public class Person {}
+"#,
+    ).unwrap();
+
+    fs::create_dir_all(dir.join("src/bar")).unwrap();
+    fs::write(
+        dir.join("src/bar/UserService.java"),
+        r#"package com.bar;
+import com.foo.Repository;
+import com.foo.Person;
+public class UserService implements Repository {
+    private Person person;
+    public void save(Object o) {}
+}
+"#,
+    ).unwrap();
+
+    fs::create_dir_all(dir.join("src/baz")).unwrap();
+    fs::write(
+        dir.join("src/baz/Client.java"),
+        r#"package com.baz;
+import com.foo.*;
+public class Client extends Person {}
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_cross_package_import_resolution() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_package_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path()).args(["impls", "com.foo.Repository"]).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("UserService"));
+}
+
+#[test]
+fn test_wildcard_import_resolution() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_package_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path()).args(["supers", "Client"]).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Person"));
+}
+
+#[test]
+fn test_same_package_implicit_resolution() {
+    let tmp = TempDir::new().unwrap();
+    setup_multi_package_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path()).args(["refs", "com.foo.Person"]).output().unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("UserService"), "UserService should reference Person via field type");
+    assert!(stdout.contains("Client"), "Client should reference Person via extends");
+}
+
 #[test]
 fn test_help_shows_all_commands() {
     let tmp = TempDir::new().unwrap();

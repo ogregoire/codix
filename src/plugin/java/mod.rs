@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use crate::model::*;
 use super::LanguagePlugin;
@@ -47,6 +48,8 @@ impl LanguagePlugin for JavaPlugin {
             }
         }
 
+        let (import_map, wildcard_imports) = parse_imports(root, source);
+
         let mut relationships = Vec::new();
 
         // Extract relationships from top-level type declarations
@@ -65,13 +68,14 @@ impl LanguagePlugin for JavaPlugin {
                 _ => None,
             };
             if let Some(type_local_id) = type_local_id {
-                extract_type_relationships(child, source, type_local_id, &symbols, &mut relationships);
+                extract_type_relationships(child, source, type_local_id, &symbols, &mut relationships, &import_map, &package);
             }
         }
 
         ExtractionResult {
             symbols,
             relationships,
+            wildcard_imports,
         }
     }
 }
@@ -94,6 +98,54 @@ fn find_package(root: tree_sitter::Node, source: &[u8]) -> String {
         }
     }
     String::new()
+}
+
+fn parse_imports(root: tree_sitter::Node, source: &[u8]) -> (HashMap<String, String>, Vec<String>) {
+    let mut import_map = HashMap::new();
+    let mut wildcards = Vec::new();
+    let mut cursor = root.walk();
+    for child in root.children(&mut cursor) {
+        if child.kind() != "import_declaration" {
+            continue;
+        }
+        let text = child.utf8_text(source).unwrap_or("");
+        if text.contains("static ") {
+            continue;
+        }
+        // Check if wildcard: last non-semicolon child is "asterisk"
+        let mut is_wildcard = false;
+        let mut pkg_node = None;
+        let mut inner = child.walk();
+        for ic in child.children(&mut inner) {
+            match ic.kind() {
+                "asterisk" => is_wildcard = true,
+                "scoped_identifier" | "identifier" => pkg_node = Some(ic),
+                _ => {}
+            }
+        }
+        if let Some(node) = pkg_node {
+            if let Ok(fqn) = node.utf8_text(source) {
+                if is_wildcard {
+                    wildcards.push(fqn.to_string());
+                } else {
+                    // simple name is last segment after "."
+                    let simple = fqn.rsplit('.').next().unwrap_or(fqn);
+                    import_map.insert(simple.to_string(), fqn.to_string());
+                }
+            }
+        }
+    }
+    (import_map, wildcards)
+}
+
+fn resolve_type_name(simple_name: &str, import_map: &HashMap<String, String>, package: &str) -> String {
+    if let Some(qualified) = import_map.get(simple_name) {
+        return qualified.clone();
+    }
+    if !package.is_empty() {
+        return format!("{}.{}", package, simple_name);
+    }
+    simple_name.to_string()
 }
 
 fn extract_type_declaration(
@@ -301,6 +353,8 @@ fn extract_type_relationships(
     type_local_id: usize,
     symbols: &[ExtractedSymbol],
     relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
 ) {
     let mut cursor = type_node.walk();
     for child in type_node.children(&mut cursor) {
@@ -308,23 +362,24 @@ fn extract_type_relationships(
             "superclass" => {
                 // class extends X
                 if let Some(name) = first_type_identifier(child, source) {
+                    let resolved = resolve_type_name(&name, import_map, package);
                     relationships.push(ExtractedRelationship {
                         source_local_id: type_local_id,
-                        target_qualified_name: name,
+                        target_qualified_name: resolved,
                         kind: RelationshipKind::Extends,
                     });
                 }
             }
             "extends_interfaces" => {
                 // interface extends X, Y
-                collect_type_list_names(child, source, type_local_id, RelationshipKind::Extends, relationships);
+                collect_type_list_names(child, source, type_local_id, RelationshipKind::Extends, relationships, import_map, package);
             }
             "super_interfaces" => {
                 // class implements X, Y
-                collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships);
+                collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships, import_map, package);
             }
             "class_body" | "interface_body" => {
-                extract_body_relationships(child, source, type_local_id, symbols, relationships);
+                extract_body_relationships(child, source, type_local_id, symbols, relationships, import_map, package);
             }
             _ => {}
         }
@@ -354,9 +409,11 @@ fn collect_type_list_names(
     source_local_id: usize,
     kind: RelationshipKind,
     relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
 ) {
     // Walk the subtree collecting all type_identifier nodes
-    collect_type_identifiers(node, source, source_local_id, kind, relationships);
+    collect_type_identifiers(node, source, source_local_id, kind, relationships, import_map, package);
 }
 
 fn collect_type_identifiers(
@@ -365,12 +422,15 @@ fn collect_type_identifiers(
     source_local_id: usize,
     kind: RelationshipKind,
     relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
 ) {
     if node.kind() == "type_identifier" {
         if let Ok(name) = node.utf8_text(source) {
+            let resolved = resolve_type_name(name, import_map, package);
             relationships.push(ExtractedRelationship {
                 source_local_id,
-                target_qualified_name: name.to_string(),
+                target_qualified_name: resolved,
                 kind,
             });
         }
@@ -378,7 +438,7 @@ fn collect_type_identifiers(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_type_identifiers(child, source, source_local_id, kind, relationships);
+        collect_type_identifiers(child, source, source_local_id, kind, relationships, import_map, package);
     }
 }
 
@@ -388,6 +448,8 @@ fn extract_body_relationships(
     type_local_id: usize,
     symbols: &[ExtractedSymbol],
     relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
 ) {
     let mut cursor = body_node.walk();
     for member in body_node.children(&mut cursor) {
@@ -402,9 +464,10 @@ fn extract_body_relationships(
 
                 // Extract the type of the field
                 if let Some(type_name) = field_type_name(member, source) {
+                    let resolved = resolve_type_name(&type_name, import_map, package);
                     relationships.push(ExtractedRelationship {
                         source_local_id: field_local_id,
-                        target_qualified_name: type_name,
+                        target_qualified_name: resolved,
                         kind: RelationshipKind::FieldType,
                     });
                 }
@@ -593,7 +656,7 @@ mod tests {
         let result = parse_java(source);
         assert_eq!(result.relationships.len(), 1);
         assert_eq!(result.relationships[0].kind, RelationshipKind::Extends);
-        assert_eq!(result.relationships[0].target_qualified_name, "BaseService");
+        assert_eq!(result.relationships[0].target_qualified_name, "com.foo.BaseService");
         assert_eq!(result.relationships[0].source_local_id, 0);
     }
 
@@ -619,7 +682,7 @@ mod tests {
         let result = parse_java(source);
         let field_types: Vec<_> = result.relationships.iter().filter(|r| r.kind == RelationshipKind::FieldType).collect();
         assert_eq!(field_types.len(), 1);
-        assert_eq!(field_types[0].target_qualified_name, "Repository");
+        assert_eq!(field_types[0].target_qualified_name, "com.foo.Repository");
     }
 
     #[test]
@@ -631,5 +694,96 @@ mod tests {
         assert_eq!(methods[0].signature, Some("save(Person)".to_string()));
         assert_eq!(methods[1].signature, Some("save(String,int)".to_string()));
         assert_ne!(methods[0].qualified_name, methods[1].qualified_name);
+    }
+
+    #[test]
+    fn test_parse_imports_single_type() {
+        let plugin = JavaPlugin;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&plugin.tree_sitter_language()).unwrap();
+        let source = "package com.bar;\nimport com.foo.Repository;\nimport com.foo.Person;\npublic class Svc {}";
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let (import_map, wildcards) = parse_imports(root, source.as_bytes());
+        assert_eq!(import_map.get("Repository"), Some(&"com.foo.Repository".to_string()));
+        assert_eq!(import_map.get("Person"), Some(&"com.foo.Person".to_string()));
+        assert!(wildcards.is_empty());
+    }
+
+    #[test]
+    fn test_parse_imports_wildcard() {
+        let plugin = JavaPlugin;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&plugin.tree_sitter_language()).unwrap();
+        let source = "package com.bar;\nimport com.foo.*;\npublic class Svc {}";
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let (import_map, wildcards) = parse_imports(root, source.as_bytes());
+        assert!(import_map.is_empty());
+        assert_eq!(wildcards, vec!["com.foo".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_imports_static_ignored() {
+        let plugin = JavaPlugin;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&plugin.tree_sitter_language()).unwrap();
+        let source = "package com.bar;\nimport static com.foo.Utils.helper;\npublic class Svc {}";
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+        let root = tree.root_node();
+        let (import_map, wildcards) = parse_imports(root, source.as_bytes());
+        assert!(import_map.is_empty());
+        assert!(wildcards.is_empty());
+    }
+
+    #[test]
+    fn test_import_resolves_extends() {
+        let source = "package com.bar;\nimport com.foo.BaseService;\npublic class UserService extends BaseService {}";
+        let result = parse_java(source);
+        assert_eq!(result.relationships.len(), 1);
+        assert_eq!(result.relationships[0].target_qualified_name, "com.foo.BaseService");
+    }
+
+    #[test]
+    fn test_same_package_resolves_type() {
+        let source = "package com.foo;\npublic class UserService extends BaseService {}";
+        let result = parse_java(source);
+        assert_eq!(result.relationships.len(), 1);
+        assert_eq!(result.relationships[0].target_qualified_name, "com.foo.BaseService");
+    }
+
+    #[test]
+    fn test_import_resolves_field_type() {
+        let source = "package com.bar;\nimport com.foo.Repository;\npublic class Svc {\n  private Repository repo;\n}";
+        let result = parse_java(source);
+        let field_types: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::FieldType).collect();
+        assert_eq!(field_types.len(), 1);
+        assert_eq!(field_types[0].target_qualified_name, "com.foo.Repository");
+    }
+
+    #[test]
+    fn test_wildcard_imports_returned() {
+        let source = "package com.bar;\nimport com.foo.*;\npublic class Svc extends Base {}";
+        let result = parse_java(source);
+        assert_eq!(result.relationships[0].target_qualified_name, "com.bar.Base");
+        assert_eq!(result.wildcard_imports, vec!["com.foo".to_string()]);
+    }
+
+    #[test]
+    fn test_method_calls_stay_simple() {
+        let source = "package com.bar;\nimport com.foo.Repository;\npublic class Svc {\n  void work() { repo.save(); }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "save");
+    }
+
+    #[test]
+    fn test_no_package_no_qualification() {
+        let source = "public class Svc extends Base {}";
+        let result = parse_java(source);
+        assert_eq!(result.relationships[0].target_qualified_name, "Base");
     }
 }

@@ -215,6 +215,46 @@ impl Store for SqliteStore {
         Ok(count as u64)
     }
 
+    fn resolve_wildcard_imports(&self, file_id: FileId, prefixes: &[String]) -> Result<u64> {
+        let mut stmt = self.conn.prepare(
+            "SELECT source_symbol_id, target_qualified_name, kind FROM relationships WHERE file_id = ?1 AND target_symbol_id IS NULL"
+        )?;
+        let rows: Vec<(i64, String, String)> = stmt.query_map(params![file_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut resolved_count = 0u64;
+        for (source_id, target_name, kind) in &rows {
+            let simple_name = target_name.rsplit('.').next().unwrap_or(target_name);
+
+            let mut matches = Vec::new();
+            for prefix in prefixes {
+                let candidate = format!("{}.{}", prefix, simple_name);
+                let exists: bool = self.conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM symbols WHERE qualified_name = ?1)",
+                    params![candidate],
+                    |row| row.get(0),
+                )?;
+                if exists {
+                    matches.push(candidate);
+                }
+            }
+
+            if matches.len() == 1 {
+                self.conn.execute(
+                    "DELETE FROM relationships WHERE source_symbol_id = ?1 AND target_qualified_name = ?2 AND kind = ?3",
+                    params![source_id, target_name, kind],
+                )?;
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO relationships (source_symbol_id, target_symbol_id, target_qualified_name, file_id, kind) VALUES (?1, NULL, ?2, ?3, ?4)",
+                    params![source_id, matches[0], file_id, kind],
+                )?;
+                resolved_count += 1;
+            }
+        }
+        Ok(resolved_count)
+    }
+
     fn find_symbol(&self, query: &SymbolQuery) -> Result<Vec<Symbol>> {
         let like_pattern = glob_to_like(&query.pattern);
         let collate = if query.case_insensitive { " COLLATE NOCASE" } else { "" };
@@ -523,6 +563,44 @@ mod tests {
         store.insert_relationships(f1, &map, &rels).unwrap();
         let resolved = store.resolve_relationships().unwrap();
         assert_eq!(resolved, 1);
+    }
+
+    #[test]
+    fn test_resolve_wildcard_imports() {
+        let store = test_store();
+
+        let f1 = store.upsert_file("Repository.java", 1, None, "java").unwrap();
+        let syms1 = vec![ExtractedSymbol {
+            local_id: 0, name: "Repository".into(), signature: None,
+            qualified_name: "com.foo.Repository".into(), kind: SymbolKind::Interface,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(),
+        }];
+        store.insert_symbols(f1, &syms1).unwrap();
+
+        let f2 = store.upsert_file("UserService.java", 1, None, "java").unwrap();
+        let syms2 = vec![ExtractedSymbol {
+            local_id: 0, name: "UserService".into(), signature: None,
+            qualified_name: "com.bar.UserService".into(), kind: SymbolKind::Class,
+            visibility: Visibility::Public,
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.bar".into(),
+        }];
+        let ids2 = store.insert_symbols(f2, &syms2).unwrap();
+        let map2: Vec<(usize, SymbolId)> = vec![(0, ids2[0])];
+        let rels = vec![ExtractedRelationship {
+            source_local_id: 0,
+            target_qualified_name: "com.bar.Repository".into(),
+            kind: RelationshipKind::Implements,
+        }];
+        store.insert_relationships(f2, &map2, &rels).unwrap();
+
+        let resolved = store.resolve_wildcard_imports(f2, &["com.foo".to_string()]).unwrap();
+        assert_eq!(resolved, 1);
+
+        let count = store.resolve_relationships().unwrap();
+        assert!(count >= 1);
     }
 
     #[test]

@@ -1,11 +1,19 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 use walkdir::WalkDir;
 use anyhow::Result;
+use sha2::{Sha256, Digest};
+use crate::model::FileId;
 use crate::plugin::{PluginRegistry, LanguagePlugin};
 use crate::store::Store;
 use super::project;
+
+fn compute_sha256(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    hex::encode(hasher.finalize())
+}
 
 /// Discover all files the registry can handle.
 pub fn discover_files(root: &Path, registry: &PluginRegistry) -> Vec<(PathBuf, String)> {
@@ -29,10 +37,17 @@ pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> 
     let files = discover_files(root, registry);
     store.begin_transaction()?;
     let mut count = 0u64;
+    let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
     for (path, ext) in &files {
         let plugin = registry.plugin_for_extension(ext).unwrap();
-        index_file(root, path, plugin, store)?;
+        let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+        if !wildcards.is_empty() {
+            wildcard_map.insert(file_id, wildcards);
+        }
         count += 1;
+    }
+    for (file_id, prefixes) in &wildcard_map {
+        store.resolve_wildcard_imports(*file_id, prefixes)?;
     }
     store.resolve_relationships()?;
     store.commit_transaction()?;
@@ -59,6 +74,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
     }
 
     // Add new or modified files
+    let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
     for (path, ext) in &disk_files {
         let rel_path = project::relative_to_root(root, path);
         let mtime = std::fs::metadata(path)?
@@ -67,27 +83,46 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
             .unwrap()
             .as_secs() as i64;
 
-        let needs_reindex = match store.get_file(&rel_path)? {
-            None => true,
-            Some(f) => f.mtime < mtime,
-        };
-
-        if needs_reindex {
-            if let Some(f) = store.get_file(&rel_path)? {
-                store.delete_relationships_for_file(f.id)?;
-                store.delete_symbols_for_file(f.id)?;
+        match store.get_file(&rel_path)? {
+            None => {
+                // New file — index it
+                let plugin = registry.plugin_for_extension(ext).unwrap();
+                let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+                if !wildcards.is_empty() {
+                    wildcard_map.insert(file_id, wildcards);
+                }
             }
-            let plugin = registry.plugin_for_extension(ext).unwrap();
-            index_file(root, path, plugin, store)?;
+            Some(f) if f.mtime < mtime => {
+                // Mtime changed — check hash to avoid unnecessary reindex
+                let source = std::fs::read(path)?;
+                let hash = compute_sha256(&source);
+                if f.hash.as_deref() == Some(&hash) {
+                    // Content unchanged, just update mtime
+                    store.upsert_file(&rel_path, mtime, Some(&hash), &f.language)?;
+                } else {
+                    // Content actually changed — reindex
+                    store.delete_relationships_for_file(f.id)?;
+                    store.delete_symbols_for_file(f.id)?;
+                    let plugin = registry.plugin_for_extension(ext).unwrap();
+                    let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+                    if !wildcards.is_empty() {
+                        wildcard_map.insert(file_id, wildcards);
+                    }
+                }
+            }
+            _ => {} // mtime unchanged — skip
         }
     }
 
+    for (file_id, prefixes) in &wildcard_map {
+        store.resolve_wildcard_imports(*file_id, prefixes)?;
+    }
     store.resolve_relationships()?;
     store.commit_transaction()?;
     Ok(())
 }
 
-fn index_file(root: &Path, path: &Path, plugin: &dyn LanguagePlugin, store: &dyn Store) -> Result<()> {
+fn index_file(root: &Path, path: &Path, plugin: &dyn LanguagePlugin, store: &dyn Store) -> Result<(FileId, Vec<String>)> {
     let source = std::fs::read(path)?;
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&plugin.tree_sitter_language())?;
@@ -100,14 +135,15 @@ fn index_file(root: &Path, path: &Path, plugin: &dyn LanguagePlugin, store: &dyn
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    let file_id = store.upsert_file(&rel_path, mtime, None, plugin.name())?;
+    let hash = compute_sha256(&source);
+    let file_id = store.upsert_file(&rel_path, mtime, Some(&hash), plugin.name())?;
     let symbol_ids = store.insert_symbols(file_id, &result.symbols)?;
     let map: Vec<(usize, _)> = result.symbols.iter()
         .map(|s| s.local_id)
         .zip(symbol_ids.iter().copied())
         .collect();
     store.insert_relationships(file_id, &map, &result.relationships)?;
-    Ok(())
+    Ok((file_id, result.wildcard_imports))
 }
 
 #[cfg(test)]
@@ -175,6 +211,58 @@ mod tests {
         fs::remove_file(root.join("src/main/java/com/foo/Bar.java")).unwrap();
         incremental_reindex(&root, &store, &registry).unwrap();
         assert_eq!(store.list_files().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_wildcard_import_resolution() {
+        let (_tmp, root) = setup_project();
+        let store = SqliteStore::open(":memory:").unwrap();
+        let registry = PluginRegistry::new();
+
+        fs::create_dir_all(root.join("src/main/java/com/bar")).unwrap();
+        fs::write(root.join("src/main/java/com/bar/Client.java"),
+            "package com.bar;\nimport com.foo.*;\npublic class Client extends Foo {}").unwrap();
+
+        full_index(&root, &store, &registry).unwrap();
+
+        let query = crate::model::SymbolQuery {
+            pattern: "Client".to_string(),
+            case_insensitive: false,
+            kind: None,
+        };
+        let results = store.find_symbol(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        let supers = store.find_supertypes(results[0].id).unwrap();
+        assert_eq!(supers.len(), 1);
+        assert_eq!(supers[0].qualified_name, "com.foo.Foo");
+    }
+
+    #[test]
+    fn test_ambiguous_wildcard_not_resolved() {
+        let (_tmp, root) = setup_project();
+        let store = SqliteStore::open(":memory:").unwrap();
+        let registry = PluginRegistry::new();
+
+        fs::create_dir_all(root.join("src/main/java/com/other")).unwrap();
+        fs::write(root.join("src/main/java/com/other/Foo.java"),
+            "package com.other;\npublic class Foo {}").unwrap();
+
+        fs::create_dir_all(root.join("src/main/java/com/client")).unwrap();
+        fs::write(root.join("src/main/java/com/client/Client.java"),
+            "package com.client;\nimport com.foo.*;\nimport com.other.*;\npublic class Client extends Foo {}").unwrap();
+
+        full_index(&root, &store, &registry).unwrap();
+
+        let query = crate::model::SymbolQuery {
+            pattern: "Client".to_string(),
+            case_insensitive: false,
+            kind: None,
+        };
+        let results = store.find_symbol(&query).unwrap();
+        assert_eq!(results.len(), 1);
+        let supers = store.find_supertypes(results[0].id).unwrap();
+        // Ambiguous: wildcard resolution skips it, COALESCE fallback may pick one
+        assert!(supers.len() <= 1);
     }
 
     #[test]

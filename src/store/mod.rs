@@ -15,6 +15,7 @@ pub trait Store {
     fn insert_relationships(&self, file_id: FileId, symbol_id_map: &[(usize, SymbolId)], relationships: &[ExtractedRelationship]) -> Result<()>;
     fn delete_relationships_for_file(&self, file_id: FileId) -> Result<()>;
     fn resolve_relationships(&self) -> Result<u64>;
+    fn resolve_wildcard_imports(&self, file_id: FileId, prefixes: &[String]) -> Result<u64>;
 
     fn find_symbol(&self, query: &SymbolQuery) -> Result<Vec<Symbol>>;
     fn find_references(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>>;
