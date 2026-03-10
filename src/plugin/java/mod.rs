@@ -14,10 +14,6 @@ impl LanguagePlugin for JavaPlugin {
         &["java"]
     }
 
-    fn symbol_kinds(&self) -> &[&str] {
-        &["class", "interface", "enum", "record", "annotation", "method", "field", "constructor"]
-    }
-
     fn tree_sitter_language(&self) -> tree_sitter::Language {
         tree_sitter_java::LANGUAGE.into()
     }
@@ -209,6 +205,7 @@ fn extract_members(
         "class_declaration" | "record_declaration" => "class_body",
         "interface_declaration" => "interface_body",
         "enum_declaration" => "enum_body",
+        "annotation_type_declaration" => "annotation_type_body",
         _ => return,
     };
 
@@ -218,14 +215,35 @@ fn extract_members(
             let mut body_cursor = child.walk();
             for member in child.children(&mut body_cursor) {
                 let local_id = symbols.len();
-                let maybe_symbol = match member.kind() {
-                    "method_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Method, import_map),
-                    "constructor_declaration" => extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Constructor, import_map),
-                    "field_declaration" => extract_field(member, source, parent_qualified_name, package, parent_local_id, local_id, import_map),
-                    _ => None,
-                };
-                if let Some(symbol) = maybe_symbol {
-                    symbols.push(symbol);
+                match member.kind() {
+                    "method_declaration" => {
+                        if let Some(symbol) = extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Method, import_map) {
+                            symbols.push(symbol);
+                        }
+                    }
+                    "constructor_declaration" => {
+                        if let Some(symbol) = extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Constructor, import_map) {
+                            symbols.push(symbol);
+                        }
+                    }
+                    "field_declaration" => {
+                        if let Some(symbol) = extract_field(member, source, parent_qualified_name, package, parent_local_id, local_id, import_map) {
+                            symbols.push(symbol);
+                        }
+                    }
+                    "class_declaration" | "interface_declaration" | "enum_declaration"
+                    | "record_declaration" | "annotation_type_declaration" => {
+                        if let Some(mut nested_symbol) = extract_type_declaration(member, source, package, local_id) {
+                            let name = nested_symbol.name.clone();
+                            nested_symbol.qualified_name = format!("{}.{}", parent_qualified_name, name);
+                            nested_symbol.parent_local_id = Some(parent_local_id);
+                            let nested_local_id = nested_symbol.local_id;
+                            let nested_qn = nested_symbol.qualified_name.clone();
+                            symbols.push(nested_symbol);
+                            extract_members(member, source, &nested_qn, package, nested_local_id, import_map, symbols);
+                        }
+                    }
+                    _ => {}
                 }
             }
             break;
@@ -371,6 +389,7 @@ fn extract_type_relationships(
     import_map: &HashMap<String, String>,
     package: &str,
 ) {
+    extract_annotations(type_node, source, type_local_id, relationships, import_map, package);
     let mut cursor = type_node.walk();
     for child in type_node.children(&mut cursor) {
         match child.kind() {
@@ -393,7 +412,7 @@ fn extract_type_relationships(
                 // class implements X, Y
                 collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships, import_map, package);
             }
-            "class_body" | "interface_body" => {
+            "class_body" | "interface_body" | "enum_body" | "annotation_type_body" => {
                 let type_qn = symbols.iter()
                     .find(|s| s.local_id == type_local_id)
                     .map(|s| s.qualified_name.as_str())
@@ -489,6 +508,8 @@ fn extract_body_relationships(
                     .map(|s| s.local_id)
                     .unwrap_or(type_local_id);
 
+                extract_annotations(member, source, field_local_id, relationships, import_map, package);
+
                 if let Some(type_name) = field_type_name(member, source) {
                     let resolved = resolve_type_name(&type_name, import_map, package);
                     relationships.push(ExtractedRelationship {
@@ -506,6 +527,9 @@ fn extract_body_relationships(
                     .map(|s| s.local_id)
                     .unwrap_or(type_local_id);
 
+                extract_annotations(member, source, method_local_id, relationships, import_map, package);
+                extract_param_annotations(member, source, method_local_id, relationships, import_map, package);
+
                 // Build scope for this method: fields + params + this
                 let mut scope = field_scope.clone();
                 for (name, qtype) in extract_method_params(member, source, import_map, package) {
@@ -514,6 +538,18 @@ fn extract_body_relationships(
                 scope.insert("this".to_string(), type_qualified_name.to_string());
 
                 collect_method_invocations(member, source, method_local_id, relationships, &scope, type_qualified_name);
+            }
+            "class_declaration" | "interface_declaration" | "enum_declaration"
+            | "record_declaration" | "annotation_type_declaration" => {
+                // Recurse into nested type declarations for their relationships
+                let nested_local_id = member.child_by_field_name("name")
+                    .and_then(|n| n.utf8_text(source).ok())
+                    .and_then(|name| {
+                        symbols.iter().find(|s| s.name == name && s.parent_local_id == Some(type_local_id)).map(|s| s.local_id)
+                    });
+                if let Some(nested_id) = nested_local_id {
+                    extract_type_relationships(member, source, nested_id, symbols, relationships, import_map, package);
+                }
             }
             _ => {}
         }
@@ -634,6 +670,65 @@ fn collect_method_invocations(
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         collect_method_invocations(child, source, method_local_id, relationships, scope, enclosing_class);
+    }
+}
+
+fn extract_annotations(
+    node: tree_sitter::Node,
+    source: &[u8],
+    source_local_id: usize,
+    relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "modifiers" {
+            let mut mod_cursor = child.walk();
+            for mod_child in child.children(&mut mod_cursor) {
+                if mod_child.kind() == "marker_annotation" || mod_child.kind() == "annotation" {
+                    if let Some(name) = annotation_name(mod_child, source) {
+                        let resolved = resolve_type_name(&name, import_map, package);
+                        relationships.push(ExtractedRelationship {
+                            source_local_id,
+                            target_qualified_name: resolved,
+                            kind: RelationshipKind::AnnotatedBy,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn annotation_name(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "identifier" || child.kind() == "scoped_identifier" {
+            return child.utf8_text(source).ok().map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+fn extract_param_annotations(
+    method_node: tree_sitter::Node,
+    source: &[u8],
+    method_local_id: usize,
+    relationships: &mut Vec<ExtractedRelationship>,
+    import_map: &HashMap<String, String>,
+    package: &str,
+) {
+    let mut cursor = method_node.walk();
+    for child in method_node.children(&mut cursor) {
+        if child.kind() == "formal_parameters" {
+            let mut param_cursor = child.walk();
+            for param in child.children(&mut param_cursor) {
+                if param.kind() == "formal_parameter" || param.kind() == "spread_parameter" {
+                    extract_annotations(param, source, method_local_id, relationships, import_map, package);
+                }
+            }
+        }
     }
 }
 
@@ -966,5 +1061,165 @@ mod tests {
         let result = parse_java(source);
         let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
         assert_eq!(ctor.type_text, None);
+    }
+
+    #[test]
+    fn test_inner_class_extracted() {
+        let source = "package com.foo;\npublic class Outer {\n  public static class Inner {}\n}";
+        let result = parse_java(source);
+        assert_eq!(result.symbols.len(), 2);
+        let inner = result.symbols.iter().find(|s| s.name == "Inner").unwrap();
+        assert_eq!(inner.kind, SymbolKind::Class);
+        assert_eq!(inner.qualified_name, "com.foo.Outer.Inner");
+        assert_eq!(inner.parent_local_id, Some(0));
+    }
+
+    #[test]
+    fn test_deeply_nested_class() {
+        let source = "package com.foo;\npublic class A {\n  class B {\n    class C {}\n  }\n}";
+        let result = parse_java(source);
+        assert_eq!(result.symbols.len(), 3);
+        let b = result.symbols.iter().find(|s| s.name == "B").unwrap();
+        assert_eq!(b.qualified_name, "com.foo.A.B");
+        let c = result.symbols.iter().find(|s| s.name == "C").unwrap();
+        assert_eq!(c.qualified_name, "com.foo.A.B.C");
+    }
+
+    #[test]
+    fn test_inner_class_members() {
+        let source = "package com.foo;\npublic class Outer {\n  public static class Inner {\n    private String name;\n    public void doWork() {}\n  }\n}";
+        let result = parse_java(source);
+        let inner = result.symbols.iter().find(|s| s.name == "Inner").unwrap();
+        let inner_id = inner.local_id;
+        let field = result.symbols.iter().find(|s| s.name == "name").unwrap();
+        assert_eq!(field.parent_local_id, Some(inner_id));
+        let method = result.symbols.iter().find(|s| s.name == "doWork").unwrap();
+        assert_eq!(method.parent_local_id, Some(inner_id));
+        assert_eq!(method.qualified_name, "com.foo.Outer.Inner.doWork()");
+    }
+
+    #[test]
+    fn test_inner_interface_extracted() {
+        let source = "package com.foo;\npublic class Outer {\n  public interface Callback {\n    void onComplete();\n  }\n}";
+        let result = parse_java(source);
+        let cb = result.symbols.iter().find(|s| s.name == "Callback").unwrap();
+        assert_eq!(cb.kind, SymbolKind::Interface);
+        assert_eq!(cb.qualified_name, "com.foo.Outer.Callback");
+        let method = result.symbols.iter().find(|s| s.name == "onComplete").unwrap();
+        assert_eq!(method.parent_local_id, Some(cb.local_id));
+    }
+
+    #[test]
+    fn test_inner_enum_extracted() {
+        let source = "package com.foo;\npublic class Outer {\n  public enum Status { ACTIVE, INACTIVE }\n}";
+        let result = parse_java(source);
+        let status = result.symbols.iter().find(|s| s.name == "Status").unwrap();
+        assert_eq!(status.kind, SymbolKind::Enum);
+        assert_eq!(status.qualified_name, "com.foo.Outer.Status");
+        assert_eq!(status.parent_local_id, Some(0));
+    }
+
+    #[test]
+    fn test_inner_class_extends_relationship() {
+        let source = "package com.foo;\nimport com.bar.Base;\npublic class Outer {\n  public static class Inner extends Base {\n    private String name;\n  }\n}";
+        let result = parse_java(source);
+        let extends: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Extends).collect();
+        assert_eq!(extends.len(), 1);
+        assert_eq!(extends[0].target_qualified_name, "com.bar.Base");
+        let inner = result.symbols.iter().find(|s| s.name == "Inner").unwrap();
+        assert_eq!(extends[0].source_local_id, inner.local_id);
+    }
+
+    #[test]
+    fn test_inner_class_field_type_relationship() {
+        let source = "package com.foo;\nimport com.bar.Repo;\npublic class Outer {\n  public static class Inner {\n    private Repo repo;\n  }\n}";
+        let result = parse_java(source);
+        let field_types: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::FieldType).collect();
+        assert_eq!(field_types.len(), 1);
+        assert_eq!(field_types[0].target_qualified_name, "com.bar.Repo");
+    }
+
+    #[test]
+    fn test_inner_class_method_calls() {
+        let source = "package com.foo;\nimport com.bar.Repo;\npublic class Outer {\n  public static class Inner {\n    private Repo repo;\n    void work() { repo.save(); }\n  }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].target_qualified_name, "com.bar.Repo.save");
+    }
+
+    #[test]
+    fn test_annotation_on_class() {
+        let source = "package com.foo;\nimport com.bar.Deprecated;\n@Deprecated\npublic class Svc {}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].source_local_id, 0);
+        assert_eq!(annots[0].target_qualified_name, "com.bar.Deprecated");
+    }
+
+    #[test]
+    fn test_annotation_on_method() {
+        let source = "package com.foo;\npublic class Svc {\n  @Override\n  public void save() {}\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].target_qualified_name, "com.foo.Override");
+    }
+
+    #[test]
+    fn test_annotation_on_constructor() {
+        let source = "package com.foo;\nimport com.bar.Inject;\npublic class Svc {\n  @Inject\n  public Svc() {}\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].target_qualified_name, "com.bar.Inject");
+    }
+
+    #[test]
+    fn test_annotation_on_field() {
+        let source = "package com.foo;\nimport com.bar.Inject;\npublic class Svc {\n  @Inject\n  private String name;\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].target_qualified_name, "com.bar.Inject");
+    }
+
+    #[test]
+    fn test_annotation_with_args() {
+        let source = "package com.foo;\nimport com.bar.SuppressWarnings;\npublic class Svc {\n  @SuppressWarnings(\"unchecked\")\n  public void save() {}\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        assert_eq!(annots[0].target_qualified_name, "com.bar.SuppressWarnings");
+    }
+
+    #[test]
+    fn test_multiple_annotations() {
+        let source = "package com.foo;\npublic class Svc {\n  @Override\n  @Deprecated\n  public void save() {}\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 2);
+    }
+
+    #[test]
+    fn test_annotation_on_param_attached_to_method() {
+        let source = "package com.foo;\nimport com.bar.NotNull;\npublic class Svc {\n  public void save(@NotNull String s) {}\n}";
+        let result = parse_java(source);
+        let annots: Vec<_> = result.relationships.iter()
+            .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
+        assert_eq!(annots.len(), 1);
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        assert_eq!(annots[0].source_local_id, method.local_id);
+        assert_eq!(annots[0].target_qualified_name, "com.bar.NotNull");
     }
 }

@@ -29,8 +29,8 @@
 ## Index Quality
 
 - [ ] Add `.codixignore` support for excluding directories/files
-- [ ] Handle inner/nested classes (currently only top-level types are parents)
-- [ ] Track annotation usage as relationships
+- [x] Handle inner/nested classes (currently only top-level types are parents)
+- [x] Track annotation usage as relationships
 - [ ] Track generic type parameters
 - [ ] Handle `throws` clause on methods
 - [x] Extract return types and parameter types as relationships
@@ -41,6 +41,11 @@
 - [ ] Add `codix status` command (show index stats: file count, symbol count, stale files)
 - [ ] Add `codix tree <symbol>` for transitive dependency graphs
 - [ ] Support multiple patterns in a single query
+
+## Verification
+
+- [ ] Verify the quality of the code
+- [ ] Verify that the output of the help messages are still correct and relevant
 
 ## Performance
 

@@ -82,10 +82,7 @@ pub enum RelationshipKind {
     Implements,
     Calls,
     FieldType,
-    ParameterType,
-    ReturnType,
-    Throws,
-    Overrides,
+    AnnotatedBy,
 }
 
 impl RelationshipKind {
@@ -95,24 +92,7 @@ impl RelationshipKind {
             RelationshipKind::Implements => "implements",
             RelationshipKind::Calls => "calls",
             RelationshipKind::FieldType => "field-type",
-            RelationshipKind::ParameterType => "parameter-type",
-            RelationshipKind::ReturnType => "return-type",
-            RelationshipKind::Throws => "throws",
-            RelationshipKind::Overrides => "overrides",
-        }
-    }
-
-    pub fn parse_relationship_kind(s: &str) -> Option<RelationshipKind> {
-        match s {
-            "extends" => Some(RelationshipKind::Extends),
-            "implements" => Some(RelationshipKind::Implements),
-            "calls" => Some(RelationshipKind::Calls),
-            "field-type" => Some(RelationshipKind::FieldType),
-            "parameter-type" => Some(RelationshipKind::ParameterType),
-            "return-type" => Some(RelationshipKind::ReturnType),
-            "throws" => Some(RelationshipKind::Throws),
-            "overrides" => Some(RelationshipKind::Overrides),
-            _ => None,
+            RelationshipKind::AnnotatedBy => "annotated-by",
         }
     }
 }
@@ -142,29 +122,6 @@ pub struct Symbol {
     pub end_column: i64,
     pub parent_symbol_id: Option<SymbolId>,
     pub package: String,
-}
-
-impl Symbol {
-    pub fn display_text(&self) -> String {
-        let label = self.signature.as_deref().unwrap_or(&self.name);
-        format!(
-            "{}:{}  {} {} {}",
-            self.file_path,
-            self.line,
-            self.visibility.as_str(),
-            self.kind.as_str(),
-            label,
-        )
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Relationship {
-    pub source_symbol_id: SymbolId,
-    pub target_symbol_id: Option<SymbolId>,
-    pub target_qualified_name: String,
-    pub file_id: FileId,
-    pub kind: RelationshipKind,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -227,51 +184,4 @@ mod tests {
         assert_eq!(Visibility::PackagePrivate.as_str(), "package-private");
     }
 
-    #[test]
-    fn test_symbol_display_text_class() {
-        let symbol = Symbol {
-            id: 1,
-            name: "UserService".to_string(),
-            signature: None,
-            qualified_name: "com.foo.UserService".to_string(),
-            kind: SymbolKind::Class,
-            visibility: Visibility::Public,
-            file_id: 1,
-            file_path: "src/main/java/com/foo/UserService.java".to_string(),
-            line: 42,
-            column: 0,
-            end_line: 100,
-            end_column: 0,
-            parent_symbol_id: None,
-            package: "com.foo".to_string(),
-        };
-        assert_eq!(
-            symbol.display_text(),
-            "src/main/java/com/foo/UserService.java:42  public class UserService"
-        );
-    }
-
-    #[test]
-    fn test_symbol_display_text_method_with_signature() {
-        let symbol = Symbol {
-            id: 2,
-            name: "save".to_string(),
-            signature: Some("save(Person)".to_string()),
-            qualified_name: "com.foo.UserService.save".to_string(),
-            kind: SymbolKind::Method,
-            visibility: Visibility::Public,
-            file_id: 1,
-            file_path: "src/main/java/com/foo/UserService.java".to_string(),
-            line: 58,
-            column: 0,
-            end_line: 70,
-            end_column: 0,
-            parent_symbol_id: None,
-            package: "com.foo".to_string(),
-        };
-        assert_eq!(
-            symbol.display_text(),
-            "src/main/java/com/foo/UserService.java:58  public method save(Person)"
-        );
-    }
 }

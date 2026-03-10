@@ -346,6 +346,66 @@ fn test_callees_with_receiver_resolution() {
 }
 
 #[test]
+fn test_inner_class_symbols() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/Outer.java"),
+        r#"package com.foo;
+public class Outer {
+    public static class Inner {
+        public void doWork() {}
+    }
+    public interface Callback {
+        void onComplete();
+    }
+}
+"#,
+    ).unwrap();
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/Outer.java"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Outer"), "should contain Outer class");
+    assert!(stdout.contains("Inner"), "should contain Inner class");
+    assert!(stdout.contains("Callback"), "should contain Callback interface");
+    assert!(stdout.contains("doWork"), "should contain Inner's method");
+    assert!(stdout.contains("onComplete"), "should contain Callback's method");
+}
+
+#[test]
+fn test_annotation_refs() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/MyAnnotation.java"),
+        r#"package com.foo;
+public @interface MyAnnotation {}
+"#,
+    ).unwrap();
+    fs::write(
+        tmp.path().join("src/Service.java"),
+        r#"package com.foo;
+public class Service {
+    @MyAnnotation
+    public void save() {}
+}
+"#,
+    ).unwrap();
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["refs", "com.foo.MyAnnotation"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("save"), "save should reference MyAnnotation via @MyAnnotation");
+}
+
+#[test]
 fn test_help_shows_all_commands() {
     let tmp = TempDir::new().unwrap();
     let out = codix_cmd(tmp.path()).arg("--help").output().unwrap();
