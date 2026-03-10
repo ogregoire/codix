@@ -3,11 +3,46 @@ use rusqlite::{Connection, params};
 use crate::model::*;
 use crate::store::Store;
 
+fn glob_to_like(pattern: &str) -> String {
+    let mut like = String::with_capacity(pattern.len());
+    for ch in pattern.chars() {
+        match ch {
+            '*' => like.push('%'),
+            '?' => like.push('_'),
+            '%' => like.push_str("\\%"),
+            '_' => like.push_str("\\_"),
+            c => like.push(c),
+        }
+    }
+    like
+}
+
 pub struct SqliteStore {
     conn: Connection,
 }
 
 impl SqliteStore {
+    fn symbol_from_row(row: &rusqlite::Row) -> rusqlite::Result<Symbol> {
+        let kind_str: String = row.get(3)?;
+        let vis_str: String = row.get(5)?;
+        Ok(Symbol {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            signature: row.get(2)?,
+            kind: SymbolKind::parse_kind(&kind_str).unwrap_or(SymbolKind::Class),
+            qualified_name: row.get(4)?,
+            visibility: Visibility::parse_visibility(&vis_str).unwrap_or(Visibility::Public),
+            file_id: row.get(6)?,
+            line: row.get(7)?,
+            column: row.get(8)?,
+            end_line: row.get(9)?,
+            end_column: row.get(10)?,
+            parent_symbol_id: row.get(11)?,
+            package: row.get(12)?,
+            file_path: row.get(13)?,
+        })
+    }
+
     pub fn open(path: &str) -> Result<Self> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
@@ -176,36 +211,172 @@ impl Store for SqliteStore {
         Ok(count as u64)
     }
 
-    fn find_symbol(&self, _query: &SymbolQuery) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_symbol(&self, query: &SymbolQuery) -> Result<Vec<Symbol>> {
+        let like_pattern = glob_to_like(&query.pattern);
+        let collate = if query.case_insensitive { " COLLATE NOCASE" } else { "" };
+
+        let base = format!(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM symbols s JOIN files f ON s.file_id = f.id \
+             WHERE (s.name LIKE ?1{collate} ESCAPE '\\' OR s.qualified_name LIKE ?2{collate} ESCAPE '\\')"
+        );
+
+        let mut sql = base;
+        if query.kind.is_some() {
+            sql.push_str(" AND s.kind = ?3");
+        }
+
+        let pattern = query.pattern.clone();
+        let like1 = like_pattern.clone();
+        let like2 = like_pattern.clone();
+        let case_insensitive = query.case_insensitive;
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<Symbol> = if let Some(kind) = query.kind {
+            stmt.query_map(params![like1, like2, kind.as_str()], Self::symbol_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![like1, like2], Self::symbol_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // Apply precise glob matching to filter out SQL LIKE over-matches
+        let results = rows.into_iter().filter(|sym| {
+            if case_insensitive {
+                let pat_lower = pattern.to_lowercase();
+                glob_match::glob_match(&pat_lower, &sym.name.to_lowercase())
+                    || glob_match::glob_match(&pat_lower, &sym.qualified_name.to_lowercase())
+            } else {
+                glob_match::glob_match(&pattern, &sym.name)
+                    || glob_match::glob_match(&pattern, &sym.qualified_name)
+            }
+        }).collect();
+
+        Ok(results)
     }
 
-    fn find_references(&self, _symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_references(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM relationships r \
+             JOIN symbols s ON s.id = r.source_symbol_id \
+             JOIN files f ON s.file_id = f.id \
+             WHERE r.target_symbol_id = ?"
+        )?;
+        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn find_implementations(&self, _symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_implementations(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
+        let extends = RelationshipKind::Extends.as_str();
+        let implements = RelationshipKind::Implements.as_str();
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM relationships r \
+             JOIN symbols s ON s.id = r.source_symbol_id \
+             JOIN files f ON s.file_id = f.id \
+             WHERE r.target_symbol_id = ? AND r.kind IN ('extends', 'implements')"
+        )?;
+        let _ = (extends, implements); // used as string literals above
+        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn find_supertypes(&self, _symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_supertypes(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM relationships r \
+             JOIN symbols s ON s.id = r.target_symbol_id \
+             JOIN files f ON s.file_id = f.id \
+             WHERE r.source_symbol_id = ? AND r.kind IN ('extends', 'implements')"
+        )?;
+        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn find_callers(&self, _symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_callers(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM relationships r \
+             JOIN symbols s ON s.id = r.source_symbol_id \
+             JOIN files f ON s.file_id = f.id \
+             WHERE r.target_symbol_id = ? AND r.kind = 'calls'"
+        )?;
+        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn find_callees(&self, _symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        todo!()
+    fn find_callees(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM relationships r \
+             JOIN symbols s ON s.id = r.target_symbol_id \
+             JOIN files f ON s.file_id = f.id \
+             WHERE r.source_symbol_id = ? AND r.kind = 'calls'"
+        )?;
+        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn symbols_in_file(&self, _file_path: &str) -> Result<Vec<Symbol>> {
-        todo!()
+    fn symbols_in_file(&self, file_path: &str) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM symbols s JOIN files f ON s.file_id = f.id \
+             WHERE f.path = ?"
+        )?;
+        let symbols = stmt.query_map(params![file_path], Self::symbol_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(symbols)
     }
 
-    fn symbols_in_package(&self, _package: &str, _query: &SymbolQuery) -> Result<Vec<Symbol>> {
-        todo!()
+    fn symbols_in_package(&self, package: &str, query: &SymbolQuery) -> Result<Vec<Symbol>> {
+        let like_pattern = glob_to_like(&query.pattern);
+        let collate = if query.case_insensitive { " COLLATE NOCASE" } else { "" };
+
+        let mut sql = format!(
+            "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
+             s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
+             FROM symbols s JOIN files f ON s.file_id = f.id \
+             WHERE s.package = ?1 AND s.name LIKE ?2{collate} ESCAPE '\\'"
+        );
+        if query.kind.is_some() {
+            sql.push_str(" AND s.kind = ?3");
+        }
+
+        let pattern = query.pattern.clone();
+        let case_insensitive = query.case_insensitive;
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows: Vec<Symbol> = if let Some(kind) = query.kind {
+            stmt.query_map(params![package, like_pattern, kind.as_str()], Self::symbol_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        } else {
+            stmt.query_map(params![package, like_pattern], Self::symbol_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // Apply precise glob matching on name
+        let results = rows.into_iter().filter(|sym| {
+            if case_insensitive {
+                glob_match::glob_match(&pattern.to_lowercase(), &sym.name.to_lowercase())
+            } else {
+                glob_match::glob_match(&pattern, &sym.name)
+            }
+        }).collect();
+
+        Ok(results)
     }
 
     fn begin_transaction(&self) -> Result<()> {
@@ -386,5 +557,157 @@ mod tests {
         let id = store.upsert_file("a.java", 1, None, "java").unwrap();
         store.delete_file(id).unwrap();
         assert!(store.get_file("a.java").unwrap().is_none());
+    }
+
+    /// Returns (store, user_service_id, save_person_id, person_repo_id, find_all_id)
+    fn seed_store() -> (SqliteStore, SymbolId, SymbolId, SymbolId, SymbolId) {
+        let store = test_store();
+
+        // File 1: UserService.java
+        let f1 = store.upsert_file("UserService.java", 1, None, "java").unwrap();
+        let syms1 = vec![
+            ExtractedSymbol {
+                local_id: 0, name: "UserService".into(), signature: None,
+                qualified_name: "com.foo.UserService".into(), kind: SymbolKind::Class,
+                visibility: Visibility::Public,
+                line: 1, column: 0, end_line: 20, end_column: 1,
+                parent_local_id: None, package: "com.foo".into(),
+            },
+            ExtractedSymbol {
+                local_id: 1, name: "save".into(), signature: Some("save(Person)".into()),
+                qualified_name: "com.foo.UserService.save(Person)".into(), kind: SymbolKind::Method,
+                visibility: Visibility::Public,
+                line: 5, column: 4, end_line: 10, end_column: 5,
+                parent_local_id: Some(0), package: "com.foo".into(),
+            },
+        ];
+        let ids1 = store.insert_symbols(f1, &syms1).unwrap();
+        let user_service_id = ids1[0];
+        let save_person_id = ids1[1];
+
+        // File 2: PersonRepo.java
+        let f2 = store.upsert_file("PersonRepo.java", 1, None, "java").unwrap();
+        let syms2 = vec![
+            ExtractedSymbol {
+                local_id: 0, name: "PersonRepo".into(), signature: None,
+                qualified_name: "com.foo.PersonRepo".into(), kind: SymbolKind::Interface,
+                visibility: Visibility::Public,
+                line: 1, column: 0, end_line: 15, end_column: 1,
+                parent_local_id: None, package: "com.foo".into(),
+            },
+            ExtractedSymbol {
+                local_id: 1, name: "findAll".into(), signature: Some("findAll()".into()),
+                qualified_name: "com.foo.PersonRepo.findAll()".into(), kind: SymbolKind::Method,
+                visibility: Visibility::Public,
+                line: 3, column: 4, end_line: 3, end_column: 30,
+                parent_local_id: Some(0), package: "com.foo".into(),
+            },
+        ];
+        let ids2 = store.insert_symbols(f2, &syms2).unwrap();
+        let person_repo_id = ids2[0];
+        let find_all_id = ids2[1];
+
+        // Relationship: UserService implements PersonRepo
+        let map1: Vec<(usize, SymbolId)> = vec![(0, user_service_id), (1, save_person_id)];
+        let rels1 = vec![ExtractedRelationship {
+            source_local_id: 0,
+            target_qualified_name: "com.foo.PersonRepo".into(),
+            kind: RelationshipKind::Implements,
+        }];
+        store.insert_relationships(f1, &map1, &rels1).unwrap();
+
+        // Relationship: UserService.save(Person) calls PersonRepo.findAll()
+        let rels2 = vec![ExtractedRelationship {
+            source_local_id: 1,
+            target_qualified_name: "com.foo.PersonRepo.findAll()".into(),
+            kind: RelationshipKind::Calls,
+        }];
+        store.insert_relationships(f1, &map1, &rels2).unwrap();
+
+        store.resolve_relationships().unwrap();
+
+        (store, user_service_id, save_person_id, person_repo_id, find_all_id)
+    }
+
+    #[test]
+    fn test_find_symbol_exact() {
+        let (store, _, _, _, _) = seed_store();
+        let q = SymbolQuery { pattern: "UserService".into(), case_insensitive: false, kind: None };
+        let results = store.find_symbol(&q).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "UserService");
+    }
+
+    #[test]
+    fn test_find_symbol_glob() {
+        let (store, _, _, _, _) = seed_store();
+        let q = SymbolQuery { pattern: "*Service".into(), case_insensitive: false, kind: None };
+        let results = store.find_symbol(&q).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "UserService");
+    }
+
+    #[test]
+    fn test_find_symbol_by_kind() {
+        let (store, _, _, _, _) = seed_store();
+        let q = SymbolQuery { pattern: "*".into(), case_insensitive: false, kind: Some(SymbolKind::Interface) };
+        let results = store.find_symbol(&q).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "PersonRepo");
+    }
+
+    #[test]
+    fn test_find_implementations() {
+        let (store, _, _, person_repo_id, _) = seed_store();
+        let results = store.find_implementations(person_repo_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "UserService");
+    }
+
+    #[test]
+    fn test_find_supertypes() {
+        let (store, user_service_id, _, _, _) = seed_store();
+        let results = store.find_supertypes(user_service_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "PersonRepo");
+    }
+
+    #[test]
+    fn test_find_callers() {
+        let (store, _, _, _, find_all_id) = seed_store();
+        let results = store.find_callers(find_all_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "save");
+    }
+
+    #[test]
+    fn test_find_callees() {
+        let (store, _, save_person_id, _, _) = seed_store();
+        let results = store.find_callees(save_person_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "findAll");
+    }
+
+    #[test]
+    fn test_find_references() {
+        let (store, _, _, person_repo_id, _) = seed_store();
+        let results = store.find_references(person_repo_id).unwrap();
+        assert!(!results.is_empty());
+        assert!(results.iter().any(|s| s.name == "UserService"));
+    }
+
+    #[test]
+    fn test_symbols_in_file() {
+        let (store, _, _, _, _) = seed_store();
+        let results = store.symbols_in_file("UserService.java").unwrap();
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn test_symbols_in_package() {
+        let (store, _, _, _, _) = seed_store();
+        let q = SymbolQuery { pattern: "*".into(), case_insensitive: false, kind: None };
+        let results = store.symbols_in_package("com.foo", &q).unwrap();
+        assert_eq!(results.len(), 4);
     }
 }
