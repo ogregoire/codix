@@ -47,9 +47,31 @@ impl LanguagePlugin for JavaPlugin {
             }
         }
 
+        let mut relationships = Vec::new();
+
+        // Extract relationships from top-level type declarations
+        let mut cursor2 = root.walk();
+        for child in root.children(&mut cursor2) {
+            let type_local_id = match child.kind() {
+                "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" | "annotation_type_declaration" => {
+                    // Find the local_id for this type by matching qualified_name
+                    let name = child
+                        .child_by_field_name("name")
+                        .and_then(|n| n.utf8_text(source).ok());
+                    name.and_then(|n| {
+                        symbols.iter().find(|s| s.name == n && s.parent_local_id.is_none()).map(|s| s.local_id)
+                    })
+                }
+                _ => None,
+            };
+            if let Some(type_local_id) = type_local_id {
+                extract_type_relationships(child, source, type_local_id, &symbols, &mut relationships);
+            }
+        }
+
         ExtractionResult {
             symbols,
-            relationships: Vec::new(),
+            relationships,
         }
     }
 }
@@ -273,6 +295,186 @@ fn extract_field(
     })
 }
 
+fn extract_type_relationships(
+    type_node: tree_sitter::Node,
+    source: &[u8],
+    type_local_id: usize,
+    symbols: &[ExtractedSymbol],
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    let mut cursor = type_node.walk();
+    for child in type_node.children(&mut cursor) {
+        match child.kind() {
+            "superclass" => {
+                // class extends X
+                if let Some(name) = first_type_identifier(child, source) {
+                    relationships.push(ExtractedRelationship {
+                        source_local_id: type_local_id,
+                        target_qualified_name: name,
+                        kind: RelationshipKind::Extends,
+                    });
+                }
+            }
+            "extends_interfaces" => {
+                // interface extends X, Y
+                collect_type_list_names(child, source, type_local_id, RelationshipKind::Extends, relationships);
+            }
+            "super_interfaces" => {
+                // class implements X, Y
+                collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships);
+            }
+            "class_body" | "interface_body" => {
+                extract_body_relationships(child, source, type_local_id, symbols, relationships);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn first_type_identifier(node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "type_identifier" {
+            return child.utf8_text(source).ok().map(|s| s.to_string());
+        }
+        // Recurse one level for nodes like `type_list`
+        let mut inner = child.walk();
+        for inner_child in child.children(&mut inner) {
+            if inner_child.kind() == "type_identifier" {
+                return inner_child.utf8_text(source).ok().map(|s| s.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn collect_type_list_names(
+    node: tree_sitter::Node,
+    source: &[u8],
+    source_local_id: usize,
+    kind: RelationshipKind,
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    // Walk the subtree collecting all type_identifier nodes
+    collect_type_identifiers(node, source, source_local_id, kind, relationships);
+}
+
+fn collect_type_identifiers(
+    node: tree_sitter::Node,
+    source: &[u8],
+    source_local_id: usize,
+    kind: RelationshipKind,
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    if node.kind() == "type_identifier" {
+        if let Ok(name) = node.utf8_text(source) {
+            relationships.push(ExtractedRelationship {
+                source_local_id,
+                target_qualified_name: name.to_string(),
+                kind,
+            });
+        }
+        return;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_type_identifiers(child, source, source_local_id, kind, relationships);
+    }
+}
+
+fn extract_body_relationships(
+    body_node: tree_sitter::Node,
+    source: &[u8],
+    type_local_id: usize,
+    symbols: &[ExtractedSymbol],
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    let mut cursor = body_node.walk();
+    for member in body_node.children(&mut cursor) {
+        match member.kind() {
+            "field_declaration" => {
+                // Find the field symbol's local_id
+                let field_local_id = symbols.iter()
+                    .find(|s| s.kind == SymbolKind::Field && s.parent_local_id == Some(type_local_id)
+                        && s.line == (member.start_position().row + 1) as i64)
+                    .map(|s| s.local_id)
+                    .unwrap_or(type_local_id);
+
+                // Extract the type of the field
+                if let Some(type_name) = field_type_name(member, source) {
+                    relationships.push(ExtractedRelationship {
+                        source_local_id: field_local_id,
+                        target_qualified_name: type_name,
+                        kind: RelationshipKind::FieldType,
+                    });
+                }
+            }
+            "method_declaration" | "constructor_declaration" => {
+                let method_local_id = symbols.iter()
+                    .find(|s| (s.kind == SymbolKind::Method || s.kind == SymbolKind::Constructor)
+                        && s.parent_local_id == Some(type_local_id)
+                        && s.line == (member.start_position().row + 1) as i64)
+                    .map(|s| s.local_id)
+                    .unwrap_or(type_local_id);
+
+                extract_method_calls(member, source, method_local_id, relationships);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn field_type_name(field_node: tree_sitter::Node, source: &[u8]) -> Option<String> {
+    // The type is the first named child that is a type node
+    let mut cursor = field_node.walk();
+    for child in field_node.children(&mut cursor) {
+        match child.kind() {
+            "type_identifier" | "generic_type" => {
+                return child.utf8_text(source).ok().map(|s| {
+                    // For generic types like "List<String>", just return the base name
+                    let base = s.split('<').next().unwrap_or(s);
+                    base.to_string()
+                });
+            }
+            "modifiers" => continue,
+            _ => {}
+        }
+    }
+    None
+}
+
+fn extract_method_calls(
+    method_node: tree_sitter::Node,
+    source: &[u8],
+    method_local_id: usize,
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    collect_method_invocations(method_node, source, method_local_id, relationships);
+}
+
+fn collect_method_invocations(
+    node: tree_sitter::Node,
+    source: &[u8],
+    method_local_id: usize,
+    relationships: &mut Vec<ExtractedRelationship>,
+) {
+    if node.kind() == "method_invocation" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            if let Ok(name) = name_node.utf8_text(source) {
+                relationships.push(ExtractedRelationship {
+                    source_local_id: method_local_id,
+                    target_qualified_name: name.to_string(),
+                    kind: RelationshipKind::Calls,
+                });
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_method_invocations(child, source, method_local_id, relationships);
+    }
+}
+
 fn extract_visibility(node: tree_sitter::Node, source: &[u8]) -> Visibility {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -383,6 +585,41 @@ mod tests {
         assert_eq!(name_field.name, "name");
         assert_eq!(name_field.kind, SymbolKind::Field);
         assert_eq!(name_field.visibility, Visibility::Private);
+    }
+
+    #[test]
+    fn test_extract_extends() {
+        let source = "package com.foo;\npublic class UserService extends BaseService {}";
+        let result = parse_java(source);
+        assert_eq!(result.relationships.len(), 1);
+        assert_eq!(result.relationships[0].kind, RelationshipKind::Extends);
+        assert_eq!(result.relationships[0].target_qualified_name, "BaseService");
+        assert_eq!(result.relationships[0].source_local_id, 0);
+    }
+
+    #[test]
+    fn test_extract_implements() {
+        let source = "package com.foo;\npublic class UserService implements Repository, Serializable {}";
+        let result = parse_java(source);
+        let impls: Vec<_> = result.relationships.iter().filter(|r| r.kind == RelationshipKind::Implements).collect();
+        assert_eq!(impls.len(), 2);
+    }
+
+    #[test]
+    fn test_extract_method_calls() {
+        let source = "package com.foo;\npublic class Svc {\n  void doWork() {\n    repo.save(entity);\n    helper.process();\n  }\n}";
+        let result = parse_java(source);
+        let calls: Vec<_> = result.relationships.iter().filter(|r| r.kind == RelationshipKind::Calls).collect();
+        assert!(calls.len() >= 2);
+    }
+
+    #[test]
+    fn test_extract_field_type() {
+        let source = "package com.foo;\npublic class Svc {\n  private Repository repo;\n}";
+        let result = parse_java(source);
+        let field_types: Vec<_> = result.relationships.iter().filter(|r| r.kind == RelationshipKind::FieldType).collect();
+        assert_eq!(field_types.len(), 1);
+        assert_eq!(field_types[0].target_qualified_name, "Repository");
     }
 
     #[test]
