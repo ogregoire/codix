@@ -46,7 +46,7 @@ A Rust CLI tool that indexes code symbols and relationships for fast querying. P
 | file_id          | FK   | References Files.id (file where this relationship was found) |
 | kind             | TEXT | extends, implements, calls, field_type, parameter_type, return_type, throws, overrides |
 
-Primary key: `(source_symbol_id, target_symbol_id, kind)`. The `file_id` column enables efficient cleanup when a file is re-indexed.
+Primary key: `(source_symbol_id, target_qualified_name, kind)`. Using `target_qualified_name` instead of `target_symbol_id` because the latter can be NULL before resolution. The `file_id` column enables efficient cleanup when a file is re-indexed.
 
 ### References
 
