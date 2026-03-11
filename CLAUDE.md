@@ -90,7 +90,7 @@ src/
 ### Key Patterns
 
 - **Store trait** (`src/store/mod.rs`): All storage access goes through this trait. SQLite is the current backend. To add a new backend, implement the trait.
-- **LanguagePlugin trait** (`src/plugin/mod.rs`): Each language is a compile-time plugin. To add a language: create `src/plugin/<lang>/mod.rs`, implement the trait, register in `PluginRegistry::new()`.
+- **LanguagePlugin trait** (`src/plugin/mod.rs`): Each language is a compile-time plugin. `name()` is the internal identifier (stored in DB), `display_name()` is for user-facing output. To add a language: create `src/plugin/<lang>/mod.rs`, implement the trait, register in `PluginRegistry::new()`.
 - **Two-pass relationship resolution**: Plugins emit relationships with `target_qualified_name` (string). After all files are indexed, `resolve_relationships()` matches these against the symbols table (first by `qualified_name`, then by `name` as fallback).
 - **Incremental reindex**: Every query command runs `incremental_reindex()` which checks mtimes. `codix index` does a full drop+rebuild.
 
@@ -99,13 +99,15 @@ src/
 - Line numbers: 1-based (tree-sitter gives 0-based rows, converted during extraction)
 - Columns: 0-based
 - Paths: stored relative to project root, displayed relative to CWD
-- `RelationshipKind::as_str()` uses kebab-case (e.g. `"field-type"`) — matches serde serialization
+- `RelationshipKind::as_str()` uses kebab-case (e.g. `"field-type"`, `"annotated-by"`) — matches serde serialization
 - Method signatures: `name(Type1,Type2)` — no spaces, no parameter names
+- Method qualified names include the signature: `com.foo.UserService.save(Person)`
+- Always use lowercase `codix` (never `Codix`)
 
 ### Testing
 
-- Unit tests: `cargo test` (47 tests in `src/`)
-- Integration tests: `cargo test --test integration` (15 tests in `tests/`)
+- Unit tests: `cargo test` (83 tests in `src/`)
+- Integration tests: `cargo test --test integration` (22 tests in `tests/`)
 - `test-project/` contains sample Java files for manual testing
 - After manual testing, clean up: `rm -rf test-project/.codix`
 
@@ -113,3 +115,4 @@ src/
 
 - Spec: `docs/superpowers/specs/2026-03-10-codix-design.md`
 - Plan: `docs/superpowers/plans/2026-03-10-codix-implementation.md`
+- Inner classes & annotations: `docs/superpowers/specs/2026-03-11-inner-classes-annotations-design.md`
