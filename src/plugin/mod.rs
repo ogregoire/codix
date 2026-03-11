@@ -23,6 +23,23 @@ pub trait LanguagePlugin {
         source: &[u8],
         file_path: &Path,
     ) -> ExtractionResult;
+
+    fn supports(&self, _capability: PluginCapability) -> bool {
+        false
+    }
+
+    fn find_rename_occurrences(
+        &self,
+        _tree: &tree_sitter::Tree,
+        _source: &[u8],
+        _symbol_name: &str,
+        _symbol_kind: &SymbolKind,
+        _symbol_qualified_name: &str,
+    ) -> Result<Vec<RenameOccurrence>, RenameError> {
+        Err(RenameError::NotSupported {
+            language: self.display_name().to_string(),
+        })
+    }
 }
 
 pub struct PluginRegistry {
@@ -62,6 +79,13 @@ impl PluginRegistry {
 
     pub fn all_language_names(&self) -> Vec<&str> {
         self.plugins.iter().map(|p| p.name()).collect()
+    }
+
+    pub fn supported_languages_for(&self, capability: PluginCapability) -> Vec<&str> {
+        self.plugins.iter()
+            .filter(|p| p.supports(capability))
+            .map(|p| p.display_name())
+            .collect()
     }
 
     pub fn plugins_for_languages(&self, languages: &[String]) -> Vec<&dyn LanguagePlugin> {
