@@ -128,6 +128,19 @@ codix is designed to be discovered and used by AI agents without documentation:
 - JSON output provides structured data when needed
 - Every query auto-reindexes stale files, so the index is always fresh
 
+To make your agent aware of codix, add a section to your agent instructions file (`CLAUDE.md`, `AGENTS.md`, `.cursor/rules`, etc.):
+
+```markdown
+## Code Navigation
+
+This project is indexed with codix. Use it instead of grep/find for symbol lookups:
+- `codix find <pattern>` — find symbol definitions
+- `codix refs <pattern>` — find references
+- `codix callers <pattern>` — find callers of a method
+- `codix impls <pattern>` — find implementations
+Run `codix` for full usage.
+```
+
 ## License
 
 MIT
