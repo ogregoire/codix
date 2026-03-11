@@ -35,6 +35,17 @@
 - [ ] Handle `throws` clause on methods
 - [x] Extract return types and parameter types as relationships
 
+## Rename
+
+- [ ] Rename local variables and parameters (not currently indexed)
+- [ ] Add rename support for Go
+- [ ] Add rename support for JavaScript/TypeScript
+- [ ] Add rename support for Python
+- [ ] Add rename support for Rust
+- [ ] Handle reflection references (e.g. `getMethod("save")`)
+- [ ] Handle Javadoc `@link` / `@see` references
+- [ ] Handle string literal references
+
 ## CLI Improvements
 
 - [x] Add `--verbose` / `--debug` flag for diagnostics (show what files were reindexed, timing info)

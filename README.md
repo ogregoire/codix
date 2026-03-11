@@ -47,6 +47,12 @@ codix impls Repository
 | `codix callers <pattern>` | Find callers of a method (resolves receiver types) |
 | `codix callees <pattern>` | Find methods called by a method (resolves receiver types) |
 
+**Refactoring**
+
+| Command | Description |
+|---------|-------------|
+| `codix rename <pattern> <new-name>` | Rename a symbol across the codebase (dry-run by default, apply with `--apply`) |
+
 When multiple symbols match a pattern, codix shows each match with a copy-pasteable command using the fully qualified name.
 
 ## Flags
@@ -98,6 +104,12 @@ cargo install codix --no-default-features --features "lang-java,lang-python"
 ```
 
 Available features: `lang-go`, `lang-java`, `lang-javascript`, `lang-python`, `lang-rust`.
+
+## Rename Limitations
+
+- Currently **Java only** — other languages will show a clear error with supported languages listed
+- Only indexed symbols (classes, methods, fields, etc.) — local variables and parameters are not supported
+- Does not detect references in reflection, Javadoc `@link`/`@see`, or string literals
 
 ## For AI Agents
 
