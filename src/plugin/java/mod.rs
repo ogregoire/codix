@@ -9,6 +9,9 @@ impl LanguagePlugin for JavaPlugin {
     fn name(&self) -> &str {
         "java"
     }
+    fn display_name(&self) -> &str {
+        "Java"
+    }
 
     fn file_extensions(&self) -> &[&str] {
         &["java"]

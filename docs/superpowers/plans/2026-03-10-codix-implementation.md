@@ -1,4 +1,4 @@
-# Codix Implementation Plan
+# codix Implementation Plan
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1367,7 +1367,7 @@ pub fn find_project_root(start: &Path) -> Result<PathBuf> {
 pub fn init_project(dir: &Path) -> Result<PathBuf> {
     let codix_dir = dir.join(".codix");
     if codix_dir.exists() {
-        bail!("Codix project already initialized in this directory.");
+        bail!("codix project already initialized in this directory.");
     }
     std::fs::create_dir(&codix_dir)?;
     Ok(codix_dir)

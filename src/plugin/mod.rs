@@ -5,6 +5,7 @@ pub mod java;
 
 pub trait LanguagePlugin {
     fn name(&self) -> &str;
+    fn display_name(&self) -> &str { self.name() }
     fn file_extensions(&self) -> &[&str];
     fn tree_sitter_language(&self) -> tree_sitter::Language;
     fn extract_symbols(

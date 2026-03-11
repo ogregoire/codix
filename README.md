@@ -1,6 +1,6 @@
-# Codix
+# codix
 
-A fast code symbol indexer built for AI coding agents. Codix indexes your codebase into a local SQLite database and provides precise symbol lookups, reference finding, and relationship queries — so AI agents can navigate code without burning tokens on grep and guesswork.
+A fast code symbol indexer built for AI coding agents. codix indexes your codebase into a local SQLite database and provides precise symbol lookups, reference finding, and relationship queries — so AI agents can navigate code without burning tokens on grep and guesswork.
 
 ## Install
 
@@ -78,7 +78,7 @@ The architecture uses a plugin trait (`LanguagePlugin`) that makes adding new la
 
 ## For AI Agents
 
-Codix is designed to be discovered and used by AI agents without documentation:
+codix is designed to be discovered and used by AI agents without documentation:
 
 - Running `codix` or any subcommand without arguments shows helpful usage
 - Text output is compact and token-efficient

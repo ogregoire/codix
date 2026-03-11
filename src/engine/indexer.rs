@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::time::UNIX_EPOCH;
+use std::time::{Instant, UNIX_EPOCH};
 use walkdir::WalkDir;
 use anyhow::Result;
 use sha2::{Sha256, Digest};
@@ -8,6 +8,15 @@ use crate::model::FileId;
 use crate::plugin::{PluginRegistry, LanguagePlugin};
 use crate::store::Store;
 use super::project;
+
+#[derive(Debug, Default)]
+pub struct ReindexStats {
+    pub added: Vec<String>,
+    pub modified: Vec<String>,
+    pub deleted: Vec<String>,
+    pub unchanged: u64,
+    pub elapsed_ms: u128,
+}
 
 fn compute_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -32,11 +41,12 @@ pub fn discover_files(root: &Path, registry: &PluginRegistry) -> Vec<(PathBuf, S
 }
 
 /// Full reindex: clear everything, re-parse all files.
-pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<u64> {
+/// Returns a map of language name → file count, sorted alphabetically.
+pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<BTreeMap<String, u64>> {
     store.clear_all()?;
     let files = discover_files(root, registry);
     store.begin_transaction()?;
-    let mut count = 0u64;
+    let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
     for (path, ext) in &files {
         let plugin = registry.plugin_for_extension(ext)
@@ -45,18 +55,19 @@ pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> 
         if !wildcards.is_empty() {
             wildcard_map.insert(file_id, wildcards);
         }
-        count += 1;
+        *counts.entry(plugin.display_name().to_string()).or_default() += 1;
     }
     for (file_id, prefixes) in &wildcard_map {
         store.resolve_wildcard_imports(*file_id, prefixes)?;
     }
     store.resolve_relationships()?;
     store.commit_transaction()?;
-    Ok(count)
+    Ok(counts)
 }
 
 /// Incremental reindex: only process new, modified, or deleted files.
-pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<()> {
+pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<ReindexStats> {
+    let start = Instant::now();
     let disk_files = discover_files(root, registry);
     let indexed_files = store.list_files()?;
 
@@ -65,7 +76,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
         .collect();
     store.begin_transaction()?;
 
-    let mut changed = false;
+    let mut stats = ReindexStats::default();
 
     // Delete removed files
     for indexed in &indexed_files {
@@ -73,7 +84,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
             store.delete_relationships_for_file(indexed.id)?;
             store.delete_symbols_for_file(indexed.id)?;
             store.delete_file(indexed.id)?;
-            changed = true;
+            stats.deleted.push(indexed.path.clone());
         }
     }
 
@@ -96,7 +107,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
                 if !wildcards.is_empty() {
                     wildcard_map.insert(file_id, wildcards);
                 }
-                changed = true;
+                stats.added.push(rel_path);
             }
             Some(f) if f.mtime < mtime => {
                 // Mtime changed — check hash to avoid unnecessary reindex
@@ -105,6 +116,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
                 if f.hash.as_deref() == Some(&hash) {
                     // Content unchanged, just update mtime
                     store.upsert_file(&rel_path, mtime, Some(&hash), &f.language)?;
+                    stats.unchanged += 1;
                 } else {
                     // Content actually changed — reindex
                     store.delete_relationships_for_file(f.id)?;
@@ -115,13 +127,16 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
                     if !wildcards.is_empty() {
                         wildcard_map.insert(file_id, wildcards);
                     }
-                    changed = true;
+                    stats.modified.push(rel_path);
                 }
             }
-            _ => {} // mtime unchanged — skip
+            _ => {
+                stats.unchanged += 1;
+            }
         }
     }
 
+    let changed = !stats.added.is_empty() || !stats.modified.is_empty() || !stats.deleted.is_empty();
     if changed {
         for (file_id, prefixes) in &wildcard_map {
             store.resolve_wildcard_imports(*file_id, prefixes)?;
@@ -129,7 +144,8 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
         store.resolve_relationships()?;
     }
     store.commit_transaction()?;
-    Ok(())
+    stats.elapsed_ms = start.elapsed().as_millis();
+    Ok(stats)
 }
 
 fn index_file(root: &Path, path: &Path, plugin: &dyn LanguagePlugin, store: &dyn Store) -> Result<(FileId, Vec<String>)> {
@@ -191,8 +207,8 @@ mod tests {
         let (_tmp, root) = setup_project();
         let store = SqliteStore::open(":memory:").unwrap();
         let registry = PluginRegistry::new();
-        let count = full_index(&root, &store, &registry).unwrap();
-        assert_eq!(count, 2);
+        let counts = full_index(&root, &store, &registry).unwrap();
+        assert_eq!(counts.values().sum::<u64>(), 2);
         assert_eq!(store.list_files().unwrap().len(), 2);
     }
 

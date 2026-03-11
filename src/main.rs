@@ -7,6 +7,7 @@ mod store;
 use clap::Parser;
 use cli::{Cli, Commands, Format};
 use engine::{indexer, project};
+use engine::indexer::ReindexStats;
 use model::{Symbol, SymbolKind, SymbolQuery};
 use plugin::PluginRegistry;
 use std::env;
@@ -24,74 +25,92 @@ fn main() {
 }
 
 fn run(cli: Cli) -> anyhow::Result<()> {
+    let verbose = cli.verbose;
     match cli.command {
-        Commands::Init => cmd_init(),
-        Commands::Index => cmd_index(),
+        Commands::Init => cmd_init(verbose),
+        Commands::Index => cmd_index(verbose),
         Commands::Find {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_find(pattern, format, case_insensitive, kind),
+        } => cmd_find(pattern, format, case_insensitive, kind, verbose),
         Commands::Refs {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_relational("refs", pattern, format, case_insensitive, kind),
+        } => cmd_relational("refs", pattern, format, case_insensitive, kind, verbose),
         Commands::Impls {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_relational("impls", pattern, format, case_insensitive, kind),
+        } => cmd_relational("impls", pattern, format, case_insensitive, kind, verbose),
         Commands::Supers {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_relational("supers", pattern, format, case_insensitive, kind),
+        } => cmd_relational("supers", pattern, format, case_insensitive, kind, verbose),
         Commands::Callers {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_relational("callers", pattern, format, case_insensitive, kind),
+        } => cmd_relational("callers", pattern, format, case_insensitive, kind, verbose),
         Commands::Callees {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_relational("callees", pattern, format, case_insensitive, kind),
-        Commands::Symbols { file, format, kind } => cmd_symbols(file, format, kind),
+        } => cmd_relational("callees", pattern, format, case_insensitive, kind, verbose),
+        Commands::Symbols { file, format, kind } => cmd_symbols(file, format, kind, verbose),
         Commands::Package {
             pattern,
             format,
             case_insensitive,
             kind,
-        } => cmd_package(pattern, format, case_insensitive, kind),
+        } => cmd_package(pattern, format, case_insensitive, kind, verbose),
     }
 }
 
-fn cmd_init() -> anyhow::Result<()> {
+fn cmd_init(verbose: bool) -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     project::init_project(&cwd)?;
     let store = SqliteStore::open(&project::db_path(&cwd).to_string_lossy())?;
     let registry = PluginRegistry::new();
-    let count = indexer::full_index(&cwd, &store, &registry)?;
+    let start = std::time::Instant::now();
+    let counts = indexer::full_index(&cwd, &store, &registry)?;
     println!("Initialized codix project in {}", cwd.display());
-    println!("Indexed {} files.", count);
+    print_index_counts(&counts);
+    if verbose {
+        eprintln!("[verbose] full index in {}ms", start.elapsed().as_millis());
+    }
     Ok(())
 }
 
-fn cmd_index() -> anyhow::Result<()> {
+fn cmd_index(verbose: bool) -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     let root = project::find_project_root(&cwd)?;
     let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
-    let count = indexer::full_index(&root, &store, &registry)?;
-    println!("Indexed {} files.", count);
+    let start = std::time::Instant::now();
+    let counts = indexer::full_index(&root, &store, &registry)?;
+    print_index_counts(&counts);
+    if verbose {
+        eprintln!("[verbose] full index in {}ms", start.elapsed().as_millis());
+    }
     Ok(())
+}
+
+fn print_index_counts(counts: &std::collections::BTreeMap<String, u64>) {
+    for (lang, count) in counts {
+        println!("Indexed {} {} {}.", count, lang, if *count == 1 { "file" } else { "files" });
+    }
+    if counts.is_empty() {
+        println!("No files to index.");
+    }
 }
 
 fn cmd_find(
@@ -99,8 +118,9 @@ fn cmd_find(
     format: Format,
     case_insensitive: bool,
     kind: Option<String>,
+    verbose: bool,
 ) -> anyhow::Result<()> {
-    let (store, root) = open_store_and_reindex()?;
+    let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
     let kind = parse_kind(kind)?;
     let query = SymbolQuery {
@@ -119,8 +139,9 @@ fn cmd_relational(
     format: Format,
     case_insensitive: bool,
     kind: Option<String>,
+    verbose: bool,
 ) -> anyhow::Result<()> {
-    let (store, root) = open_store_and_reindex()?;
+    let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
     let parsed_kind = parse_kind(kind.clone())?;
     let query = SymbolQuery {
@@ -174,8 +195,8 @@ fn cmd_relational(
     Ok(())
 }
 
-fn cmd_symbols(file: PathBuf, format: Format, kind: Option<String>) -> anyhow::Result<()> {
-    let (store, root) = open_store_and_reindex()?;
+fn cmd_symbols(file: PathBuf, format: Format, kind: Option<String>, verbose: bool) -> anyhow::Result<()> {
+    let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
     let kind = parse_kind(kind)?;
 
@@ -200,8 +221,9 @@ fn cmd_package(
     format: Format,
     case_insensitive: bool,
     kind: Option<String>,
+    verbose: bool,
 ) -> anyhow::Result<()> {
-    let (store, root) = open_store_and_reindex()?;
+    let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
     let kind = parse_kind(kind)?;
     let query = SymbolQuery {
@@ -251,11 +273,35 @@ fn parse_kind(kind: Option<String>) -> anyhow::Result<Option<SymbolKind>> {
     }
 }
 
-fn open_store_and_reindex() -> anyhow::Result<(SqliteStore, PathBuf)> {
+fn open_store_and_reindex(verbose: bool) -> anyhow::Result<(SqliteStore, PathBuf)> {
     let cwd = env::current_dir()?;
     let root = project::find_project_root(&cwd)?;
     let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
-    indexer::incremental_reindex(&root, &store, &registry)?;
+    let stats = indexer::incremental_reindex(&root, &store, &registry)?;
+    if verbose {
+        print_reindex_stats(&stats);
+    }
     Ok((store, root))
+}
+
+fn print_reindex_stats(stats: &ReindexStats) {
+    let changed = !stats.added.is_empty() || !stats.modified.is_empty() || !stats.deleted.is_empty();
+    if !changed {
+        eprintln!("[verbose] index up-to-date ({} files, {}ms)", stats.unchanged, stats.elapsed_ms);
+        return;
+    }
+    for f in &stats.added {
+        eprintln!("[verbose] added: {}", f);
+    }
+    for f in &stats.modified {
+        eprintln!("[verbose] modified: {}", f);
+    }
+    for f in &stats.deleted {
+        eprintln!("[verbose] deleted: {}", f);
+    }
+    eprintln!(
+        "[verbose] reindexed in {}ms ({} added, {} modified, {} deleted, {} unchanged)",
+        stats.elapsed_ms, stats.added.len(), stats.modified.len(), stats.deleted.len(), stats.unchanged
+    );
 }

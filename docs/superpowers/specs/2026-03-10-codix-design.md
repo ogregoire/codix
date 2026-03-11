@@ -1,4 +1,4 @@
-# Codix Design Spec
+# codix Design Spec
 
 A Rust CLI tool that indexes code symbols and relationships for fast querying. Primary consumer: AI code agents (e.g. Claude Code). Avoids token-burning exploration by providing precise, indexed lookups.
 

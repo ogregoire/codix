@@ -48,7 +48,7 @@ fn test_init_indexes_files() {
     let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Indexed 2 files"));
+    assert!(stdout.contains("Indexed 2 Java files"));
 }
 
 #[test]

@@ -4,6 +4,9 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "codix", about = "Code symbol indexer for AI agents")]
 pub struct Cli {
+    /// Show diagnostic info (files reindexed, timing)
+    #[arg(short = 'v', long, global = true)]
+    pub verbose: bool,
     #[command(subcommand)]
     pub command: Commands,
 }
