@@ -154,11 +154,11 @@ fn extract_type_declaration(
     local_id: usize,
 ) -> Option<ExtractedSymbol> {
     let kind = match node.kind() {
-        "class_declaration" => SymbolKind::Class,
-        "interface_declaration" => SymbolKind::Interface,
-        "enum_declaration" => SymbolKind::Enum,
-        "record_declaration" => SymbolKind::Record,
-        "annotation_type_declaration" => SymbolKind::Annotation,
+        "class_declaration" => SymbolKind::new("class"),
+        "interface_declaration" => SymbolKind::new("interface"),
+        "enum_declaration" => SymbolKind::new("enum"),
+        "record_declaration" => SymbolKind::new("record"),
+        "annotation_type_declaration" => SymbolKind::new("annotation"),
         _ => return None,
     };
 
@@ -220,7 +220,7 @@ fn extract_members(
                 let local_id = symbols.len();
                 match member.kind() {
                     "method_declaration" => {
-                        if let Some(symbol) = extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Method, import_map) {
+                        if let Some(symbol) = extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::new("method"), import_map) {
                             symbols.push(symbol);
                         }
                     }
@@ -313,7 +313,7 @@ fn extract_method(
     let signature = format!("{}({})", name, param_types);
     let qualified_name = format!("{}.{}", parent_qualified_name, signature);
 
-    let type_text = if kind == SymbolKind::Constructor {
+    let type_text = if kind == SymbolKind::new("constructor") {
         None
     } else {
         method_return_type(node, source).map(|t| resolve_type_name(&t, import_map, package))
@@ -377,7 +377,7 @@ fn extract_constructor(
         name,
         signature: Some(signature),
         qualified_name,
-        kind: SymbolKind::Constructor,
+        kind: SymbolKind::new("constructor"),
         visibility,
         line: (start.row + 1) as i64,
         column: start.column as i64,
@@ -424,7 +424,7 @@ fn extract_field(
         name,
         signature: None,
         qualified_name,
-        kind: SymbolKind::Field,
+        kind: SymbolKind::new("field"),
         visibility,
         line: (start.row + 1) as i64,
         column: start.column as i64,
@@ -535,7 +535,7 @@ fn extract_body_relationships(
 ) {
     // Build field scope: name -> qualified type
     let mut field_scope: HashMap<String, String> = HashMap::new();
-    for sym in symbols.iter().filter(|s| s.kind == SymbolKind::Field && s.parent_local_id == Some(type_local_id)) {
+    for sym in symbols.iter().filter(|s| s.kind == SymbolKind::new("field") && s.parent_local_id == Some(type_local_id)) {
         if let Some(ref tt) = sym.type_text {
             field_scope.insert(sym.name.clone(), tt.clone());
         }
@@ -546,7 +546,7 @@ fn extract_body_relationships(
         match member.kind() {
             "field_declaration" => {
                 let field_local_id = symbols.iter()
-                    .find(|s| s.kind == SymbolKind::Field && s.parent_local_id == Some(type_local_id)
+                    .find(|s| s.kind == SymbolKind::new("field") && s.parent_local_id == Some(type_local_id)
                         && s.line == (member.start_position().row + 1) as i64)
                     .map(|s| s.local_id)
                     .unwrap_or(type_local_id);
@@ -564,7 +564,7 @@ fn extract_body_relationships(
             }
             "method_declaration" | "constructor_declaration" | "compact_constructor_declaration" => {
                 let method_local_id = symbols.iter()
-                    .find(|s| (s.kind == SymbolKind::Method || s.kind == SymbolKind::Constructor)
+                    .find(|s| (s.kind == SymbolKind::new("method") || s.kind == SymbolKind::new("constructor"))
                         && s.parent_local_id == Some(type_local_id)
                         && s.line == (member.start_position().row + 1) as i64)
                     .map(|s| s.local_id)
@@ -817,7 +817,7 @@ mod tests {
         let result = parse_java("package com.foo;\n\npublic class UserService {}");
         assert_eq!(result.symbols.len(), 1);
         assert_eq!(result.symbols[0].name, "UserService");
-        assert_eq!(result.symbols[0].kind, SymbolKind::Class);
+        assert_eq!(result.symbols[0].kind, SymbolKind::new("class"));
         assert_eq!(result.symbols[0].visibility, Visibility::Public);
         assert_eq!(result.symbols[0].package, "com.foo");
         assert_eq!(result.symbols[0].qualified_name, "com.foo.UserService");
@@ -827,14 +827,14 @@ mod tests {
     fn test_extract_interface() {
         let result = parse_java("package com.foo;\n\npublic interface Repository {}");
         assert_eq!(result.symbols.len(), 1);
-        assert_eq!(result.symbols[0].kind, SymbolKind::Interface);
+        assert_eq!(result.symbols[0].kind, SymbolKind::new("interface"));
     }
 
     #[test]
     fn test_extract_enum() {
         let result = parse_java("package com.foo;\n\npublic enum Status { ACTIVE, INACTIVE }");
         assert_eq!(result.symbols.len(), 1);
-        assert_eq!(result.symbols[0].kind, SymbolKind::Enum);
+        assert_eq!(result.symbols[0].kind, SymbolKind::new("enum"));
     }
 
     #[test]
@@ -863,7 +863,7 @@ mod tests {
         let save = &result.symbols[1];
         assert_eq!(save.name, "save");
         assert_eq!(save.signature, Some("save(Person)".to_string()));
-        assert_eq!(save.kind, SymbolKind::Method);
+        assert_eq!(save.kind, SymbolKind::new("method"));
         assert_eq!(save.parent_local_id, Some(0));
         let count = &result.symbols[2];
         assert_eq!(count.signature, Some("count()".to_string()));
@@ -877,7 +877,7 @@ mod tests {
         assert_eq!(result.symbols.len(), 2);
         let ctor = &result.symbols[1];
         assert_eq!(ctor.name, "Svc");
-        assert_eq!(ctor.kind, SymbolKind::Constructor);
+        assert_eq!(ctor.kind, SymbolKind::new("constructor"));
         assert_eq!(ctor.signature, Some("Svc(String)".to_string()));
     }
 
@@ -888,7 +888,7 @@ mod tests {
         assert_eq!(result.symbols.len(), 3); // class + 2 fields
         let name_field = &result.symbols[1];
         assert_eq!(name_field.name, "name");
-        assert_eq!(name_field.kind, SymbolKind::Field);
+        assert_eq!(name_field.kind, SymbolKind::new("field"));
         assert_eq!(name_field.visibility, Visibility::Private);
     }
 
@@ -931,7 +931,7 @@ mod tests {
     fn test_method_overloads() {
         let source = "package com.foo;\npublic class Svc {\n  void save(Person p) {}\n  void save(String s, int i) {}\n}";
         let result = parse_java(source);
-        let methods: Vec<_> = result.symbols.iter().filter(|s| s.kind == SymbolKind::Method).collect();
+        let methods: Vec<_> = result.symbols.iter().filter(|s| s.kind == SymbolKind::new("method")).collect();
         assert_eq!(methods.len(), 2);
         assert_eq!(methods[0].signature, Some("save(Person)".to_string()));
         assert_eq!(methods[1].signature, Some("save(String,int)".to_string()));
@@ -1083,7 +1083,7 @@ mod tests {
     fn test_field_type_text() {
         let source = "package com.foo;\nimport com.bar.Repository;\npublic class Svc {\n  private Repository repo;\n}";
         let result = parse_java(source);
-        let field = result.symbols.iter().find(|s| s.kind == SymbolKind::Field).unwrap();
+        let field = result.symbols.iter().find(|s| s.kind == SymbolKind::new("field")).unwrap();
         assert_eq!(field.type_text, Some("com.bar.Repository".to_string()));
     }
 
@@ -1091,7 +1091,7 @@ mod tests {
     fn test_method_return_type_text() {
         let source = "package com.foo;\nimport com.bar.Person;\npublic class Svc {\n  public Person findById(int id) { return null; }\n}";
         let result = parse_java(source);
-        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::new("method")).unwrap();
         assert_eq!(method.type_text, Some("com.bar.Person".to_string()));
     }
 
@@ -1099,7 +1099,7 @@ mod tests {
     fn test_void_method_type_text_is_none() {
         let source = "package com.foo;\npublic class Svc {\n  public void save() {}\n}";
         let result = parse_java(source);
-        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::new("method")).unwrap();
         assert_eq!(method.type_text, None);
     }
 
@@ -1107,7 +1107,7 @@ mod tests {
     fn test_constructor_type_text_is_none() {
         let source = "package com.foo;\npublic class Svc {\n  public Svc() {}\n}";
         let result = parse_java(source);
-        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::new("constructor")).unwrap();
         assert_eq!(ctor.type_text, None);
     }
 
@@ -1117,7 +1117,7 @@ mod tests {
         let result = parse_java(source);
         assert_eq!(result.symbols.len(), 2);
         let inner = result.symbols.iter().find(|s| s.name == "Inner").unwrap();
-        assert_eq!(inner.kind, SymbolKind::Class);
+        assert_eq!(inner.kind, SymbolKind::new("class"));
         assert_eq!(inner.qualified_name, "com.foo.Outer.Inner");
         assert_eq!(inner.parent_local_id, Some(0));
     }
@@ -1151,7 +1151,7 @@ mod tests {
         let source = "package com.foo;\npublic class Outer {\n  public interface Callback {\n    void onComplete();\n  }\n}";
         let result = parse_java(source);
         let cb = result.symbols.iter().find(|s| s.name == "Callback").unwrap();
-        assert_eq!(cb.kind, SymbolKind::Interface);
+        assert_eq!(cb.kind, SymbolKind::new("interface"));
         assert_eq!(cb.qualified_name, "com.foo.Outer.Callback");
         let method = result.symbols.iter().find(|s| s.name == "onComplete").unwrap();
         assert_eq!(method.parent_local_id, Some(cb.local_id));
@@ -1162,7 +1162,7 @@ mod tests {
         let source = "package com.foo;\npublic class Outer {\n  public enum Status { ACTIVE, INACTIVE }\n}";
         let result = parse_java(source);
         let status = result.symbols.iter().find(|s| s.name == "Status").unwrap();
-        assert_eq!(status.kind, SymbolKind::Enum);
+        assert_eq!(status.kind, SymbolKind::new("enum"));
         assert_eq!(status.qualified_name, "com.foo.Outer.Status");
         assert_eq!(status.parent_local_id, Some(0));
     }
@@ -1266,7 +1266,7 @@ mod tests {
         let annots: Vec<_> = result.relationships.iter()
             .filter(|r| r.kind == RelationshipKind::AnnotatedBy).collect();
         assert_eq!(annots.len(), 1);
-        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
+        let method = result.symbols.iter().find(|s| s.kind == SymbolKind::new("method")).unwrap();
         assert_eq!(annots[0].source_local_id, method.local_id);
         assert_eq!(annots[0].target_qualified_name, "com.bar.NotNull");
     }
@@ -1276,7 +1276,7 @@ mod tests {
         let source = "package com.foo;\npublic record Point(int x, int y) {\n  Point {\n    if (x < 0) throw new IllegalArgumentException();\n  }\n}";
         let result = parse_java(source);
         assert_eq!(result.symbols.len(), 2);
-        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::new("constructor")).unwrap();
         assert_eq!(ctor.name, "Point");
         assert_eq!(ctor.signature, Some("Point(int,int)".to_string()));
         assert_eq!(ctor.qualified_name, "com.foo.Point.Point(int,int)");
@@ -1288,7 +1288,7 @@ mod tests {
         let source = "package com.foo;\npublic record Point(int x, int y) {\n  Point(int x, int y) {\n    this.x = x;\n    this.y = y;\n  }\n}";
         let result = parse_java(source);
         assert_eq!(result.symbols.len(), 2);
-        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::new("constructor")).unwrap();
         assert_eq!(ctor.name, "Point");
         assert_eq!(ctor.signature, Some("Point(int,int)".to_string()));
         assert_eq!(ctor.qualified_name, "com.foo.Point.Point(int,int)");

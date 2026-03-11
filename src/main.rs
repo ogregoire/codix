@@ -161,7 +161,7 @@ fn cmd_find(
 ) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
-    let kind = parse_kind(kind)?;
+    let kind = parse_kind(kind);
     let query = SymbolQuery {
         pattern,
         case_insensitive,
@@ -182,7 +182,7 @@ fn cmd_relational(
 ) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
-    let parsed_kind = parse_kind(kind.clone())?;
+    let parsed_kind = parse_kind(kind.clone());
     let query = SymbolQuery {
         pattern: pattern.clone(),
         case_insensitive,
@@ -237,7 +237,7 @@ fn cmd_relational(
 fn cmd_symbols(file: PathBuf, format: Format, kind: Option<String>, verbose: bool) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
-    let kind = parse_kind(kind)?;
+    let kind = parse_kind(kind);
 
     // Convert file path to relative-to-root
     let abs_path = if file.is_absolute() {
@@ -264,7 +264,7 @@ fn cmd_package(
 ) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
-    let kind = parse_kind(kind)?;
+    let kind = parse_kind(kind);
     let query = SymbolQuery {
         pattern: "*".to_string(),
         case_insensitive,
@@ -300,16 +300,8 @@ fn print_symbols(symbols: &[Symbol], format: &Format, root: &std::path::Path, cw
     }
 }
 
-fn parse_kind(kind: Option<String>) -> anyhow::Result<Option<SymbolKind>> {
-    match kind {
-        None => Ok(None),
-        Some(k) => SymbolKind::parse_kind(&k).map(Some).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown symbol kind: '{}'. Valid kinds: class, interface, enum, record, annotation, method, field, constructor",
-                k
-            )
-        }),
-    }
+fn parse_kind(kind: Option<String>) -> Option<SymbolKind> {
+    kind.map(|k| SymbolKind::new(&k))
 }
 
 fn open_store_and_reindex(verbose: bool) -> anyhow::Result<(SqliteStore, PathBuf)> {

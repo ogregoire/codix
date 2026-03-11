@@ -3,45 +3,16 @@ use serde::Serialize;
 pub type FileId = i64;
 pub type SymbolId = i64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SymbolKind {
-    Class,
-    Interface,
-    Enum,
-    Record,
-    Annotation,
-    Method,
-    Field,
-    Constructor,
-}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SymbolKind(String);
 
 impl SymbolKind {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SymbolKind::Class => "class",
-            SymbolKind::Interface => "interface",
-            SymbolKind::Enum => "enum",
-            SymbolKind::Record => "record",
-            SymbolKind::Annotation => "annotation",
-            SymbolKind::Method => "method",
-            SymbolKind::Field => "field",
-            SymbolKind::Constructor => "constructor",
-        }
+    pub fn new(s: &str) -> Self {
+        SymbolKind(s.to_string())
     }
 
-    pub fn parse_kind(s: &str) -> Option<SymbolKind> {
-        match s {
-            "class" => Some(SymbolKind::Class),
-            "interface" => Some(SymbolKind::Interface),
-            "enum" => Some(SymbolKind::Enum),
-            "record" => Some(SymbolKind::Record),
-            "annotation" => Some(SymbolKind::Annotation),
-            "method" => Some(SymbolKind::Method),
-            "field" => Some(SymbolKind::Field),
-            "constructor" => Some(SymbolKind::Constructor),
-            _ => None,
-        }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -168,8 +139,8 @@ mod tests {
 
     #[test]
     fn test_symbol_kind_display() {
-        assert_eq!(SymbolKind::Class.as_str(), "class");
-        assert_eq!(SymbolKind::Method.as_str(), "method");
+        assert_eq!(SymbolKind::new("class").as_str(), "class");
+        assert_eq!(SymbolKind::new("method").as_str(), "method");
     }
 
     #[test]
