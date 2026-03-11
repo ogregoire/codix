@@ -451,11 +451,6 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn rollback_transaction(&self) -> Result<()> {
-        self.conn.execute_batch("ROLLBACK")?;
-        Ok(())
-    }
-
     fn clear_all(&self) -> Result<()> {
         self.conn.execute_batch("DELETE FROM relationships; DELETE FROM symbols; DELETE FROM files;")?;
         Ok(())

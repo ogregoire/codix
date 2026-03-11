@@ -28,6 +28,5 @@ pub trait Store {
 
     fn begin_transaction(&self) -> Result<()>;
     fn commit_transaction(&self) -> Result<()>;
-    fn rollback_transaction(&self) -> Result<()>;
     fn clear_all(&self) -> Result<()>;
 }

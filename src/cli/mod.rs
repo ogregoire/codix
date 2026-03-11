@@ -16,7 +16,7 @@ pub enum Format {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Create a new codix project in the current directory
+    /// Initialize codix project and index all source files
     Init,
     /// Full reindex — drop all data and rebuild from scratch
     Index,
@@ -31,8 +31,9 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
-    /// Find all references to a symbol
+    /// Find symbols that reference a given symbol (extends, implements, calls, field types, annotations)
     Refs {
+        /// Symbol name or qualified name (e.g. Repository, com.foo.Repository)
         pattern: String,
         #[arg(short = 'f', long, default_value = "text")]
         format: Format,
@@ -43,6 +44,7 @@ pub enum Commands {
     },
     /// Find implementations of an interface or subclasses of a class
     Impls {
+        /// Interface or class name (e.g. Repository, com.foo.Repository)
         pattern: String,
         #[arg(short = 'f', long, default_value = "text")]
         format: Format,
@@ -51,8 +53,9 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
-    /// Find supertypes (extends/implements)
+    /// Find supertypes of a class or interface (what it extends/implements)
     Supers {
+        /// Class or interface name
         pattern: String,
         #[arg(short = 'f', long, default_value = "text")]
         format: Format,
@@ -61,8 +64,9 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
-    /// Find callers of a method
+    /// Find methods that call a given method (resolves receiver types via field/param declarations)
     Callers {
+        /// Method name or qualified name (e.g. save*, com.foo.Repository.save*)
         pattern: String,
         #[arg(short = 'f', long, default_value = "text")]
         format: Format,
@@ -71,8 +75,9 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
-    /// Find methods called by a method
+    /// Find methods called by a given method (resolves receiver types via field/param declarations)
     Callees {
+        /// Method name or qualified name
         pattern: String,
         #[arg(short = 'f', long, default_value = "text")]
         format: Format,

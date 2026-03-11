@@ -76,7 +76,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
 fn cmd_init() -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     project::init_project(&cwd)?;
-    let store = SqliteStore::open(project::db_path(&cwd).to_str().unwrap())?;
+    let store = SqliteStore::open(&project::db_path(&cwd).to_string_lossy())?;
     let registry = PluginRegistry::new();
     let count = indexer::full_index(&cwd, &store, &registry)?;
     println!("Initialized codix project in {}", cwd.display());
@@ -87,7 +87,7 @@ fn cmd_init() -> anyhow::Result<()> {
 fn cmd_index() -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     let root = project::find_project_root(&cwd)?;
-    let store = SqliteStore::open(project::db_path(&root).to_str().unwrap())?;
+    let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
     let count = indexer::full_index(&root, &store, &registry)?;
     println!("Indexed {} files.", count);
@@ -122,33 +122,43 @@ fn cmd_relational(
 ) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex()?;
     let cwd = env::current_dir()?;
-    let kind = parse_kind(kind)?;
+    let parsed_kind = parse_kind(kind.clone())?;
     let query = SymbolQuery {
         pattern: pattern.clone(),
         case_insensitive,
-        kind,
+        kind: parsed_kind,
     };
     let matches = store.find_symbol(&query)?;
 
     if matches.is_empty() {
-        eprintln!("No symbol found matching '{}'", pattern);
-        process::exit(1);
+        anyhow::bail!("No symbol found matching '{}'", pattern);
     }
     if matches.len() > 1 {
-        eprintln!("Multiple symbols match '{}'. Be more specific:", pattern);
+        let mut flags = String::new();
+        if case_insensitive { flags.push_str(" -i"); }
+        if let Some(k) = &kind { flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''"))); }
+        match format {
+            Format::Json => flags.push_str(" -f json"),
+            Format::Text => {}
+        }
+        let mut msg = format!("Multiple symbols match '{}'. Be more specific:\n", pattern);
         for sym in &matches {
             let path = project::display_path(&root, &cwd, &sym.file_path);
             let label = sym.signature.as_deref().unwrap_or(&sym.name);
-            eprintln!(
-                "  {}:{}  {} {} {}",
+            let escaped_name = sym.qualified_name.replace('\'', "'\\''");
+            msg.push_str(&format!(
+                "  {}:{}  {} {} {}\n  → codix {} '{}'{}\n",
                 path,
                 sym.line,
                 sym.visibility.as_str(),
                 sym.kind.as_str(),
-                label
-            );
+                label,
+                command,
+                escaped_name,
+                flags
+            ));
         }
-        process::exit(1);
+        anyhow::bail!("{}", msg.trim_end());
     }
 
     let sym = &matches[0];
@@ -207,6 +217,9 @@ fn cmd_package(
 fn print_symbols(symbols: &[Symbol], format: &Format, root: &std::path::Path, cwd: &std::path::Path) {
     match format {
         Format::Text => {
+            if symbols.is_empty() {
+                println!("No results found.");
+            }
             for sym in symbols {
                 let path = project::display_path(root, cwd, &sym.file_path);
                 let label = sym.signature.as_deref().unwrap_or(&sym.name);
@@ -221,7 +234,7 @@ fn print_symbols(symbols: &[Symbol], format: &Format, root: &std::path::Path, cw
             }
         }
         Format::Json => {
-            println!("{}", serde_json::to_string_pretty(symbols).unwrap());
+            println!("{}", serde_json::to_string_pretty(symbols).expect("Symbol serialization should not fail"));
         }
     }
 }
@@ -241,7 +254,7 @@ fn parse_kind(kind: Option<String>) -> anyhow::Result<Option<SymbolKind>> {
 fn open_store_and_reindex() -> anyhow::Result<(SqliteStore, PathBuf)> {
     let cwd = env::current_dir()?;
     let root = project::find_project_root(&cwd)?;
-    let store = SqliteStore::open(project::db_path(&root).to_str().unwrap())?;
+    let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
     indexer::incremental_reindex(&root, &store, &registry)?;
     Ok((store, root))

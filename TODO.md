@@ -51,4 +51,3 @@
 
 - [ ] Parallel file parsing during indexing (rayon)
 - [ ] Benchmark incremental reindex on large projects (10k+ files)
-- [ ] Consider filesystem watcher as alternative to mtime polling

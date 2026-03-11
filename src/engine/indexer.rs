@@ -39,7 +39,8 @@ pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> 
     let mut count = 0u64;
     let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
     for (path, ext) in &files {
-        let plugin = registry.plugin_for_extension(ext).unwrap();
+        let plugin = registry.plugin_for_extension(ext)
+                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
         let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
         if !wildcards.is_empty() {
             wildcard_map.insert(file_id, wildcards);
@@ -64,12 +65,15 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
         .collect();
     store.begin_transaction()?;
 
+    let mut changed = false;
+
     // Delete removed files
     for indexed in &indexed_files {
         if !disk_paths.contains(&indexed.path) {
             store.delete_relationships_for_file(indexed.id)?;
             store.delete_symbols_for_file(indexed.id)?;
             store.delete_file(indexed.id)?;
+            changed = true;
         }
     }
 
@@ -80,17 +84,19 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
         let mtime = std::fs::metadata(path)?
             .modified()?
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs() as i64;
 
         match store.get_file(&rel_path)? {
             None => {
                 // New file — index it
-                let plugin = registry.plugin_for_extension(ext).unwrap();
+                let plugin = registry.plugin_for_extension(ext)
+                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
                 let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
                 if !wildcards.is_empty() {
                     wildcard_map.insert(file_id, wildcards);
                 }
+                changed = true;
             }
             Some(f) if f.mtime < mtime => {
                 // Mtime changed — check hash to avoid unnecessary reindex
@@ -103,21 +109,25 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
                     // Content actually changed — reindex
                     store.delete_relationships_for_file(f.id)?;
                     store.delete_symbols_for_file(f.id)?;
-                    let plugin = registry.plugin_for_extension(ext).unwrap();
+                    let plugin = registry.plugin_for_extension(ext)
+                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
                     let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
                     if !wildcards.is_empty() {
                         wildcard_map.insert(file_id, wildcards);
                     }
+                    changed = true;
                 }
             }
             _ => {} // mtime unchanged — skip
         }
     }
 
-    for (file_id, prefixes) in &wildcard_map {
-        store.resolve_wildcard_imports(*file_id, prefixes)?;
+    if changed {
+        for (file_id, prefixes) in &wildcard_map {
+            store.resolve_wildcard_imports(*file_id, prefixes)?;
+        }
+        store.resolve_relationships()?;
     }
-    store.resolve_relationships()?;
     store.commit_transaction()?;
     Ok(())
 }

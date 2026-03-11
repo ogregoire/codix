@@ -406,11 +406,11 @@ fn extract_type_relationships(
             }
             "extends_interfaces" => {
                 // interface extends X, Y
-                collect_type_list_names(child, source, type_local_id, RelationshipKind::Extends, relationships, import_map, package);
+                collect_type_identifiers(child, source, type_local_id, RelationshipKind::Extends, relationships, import_map, package);
             }
             "super_interfaces" => {
                 // class implements X, Y
-                collect_type_list_names(child, source, type_local_id, RelationshipKind::Implements, relationships, import_map, package);
+                collect_type_identifiers(child, source, type_local_id, RelationshipKind::Implements, relationships, import_map, package);
             }
             "class_body" | "interface_body" | "enum_body" | "annotation_type_body" => {
                 let type_qn = symbols.iter()
@@ -439,19 +439,6 @@ fn first_type_identifier(node: tree_sitter::Node, source: &[u8]) -> Option<Strin
         }
     }
     None
-}
-
-fn collect_type_list_names(
-    node: tree_sitter::Node,
-    source: &[u8],
-    source_local_id: usize,
-    kind: RelationshipKind,
-    relationships: &mut Vec<ExtractedRelationship>,
-    import_map: &HashMap<String, String>,
-    package: &str,
-) {
-    // Walk the subtree collecting all type_identifier nodes
-    collect_type_identifiers(node, source, source_local_id, kind, relationships, import_map, package);
 }
 
 fn collect_type_identifiers(
@@ -669,7 +656,12 @@ fn collect_method_invocations(
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        collect_method_invocations(child, source, method_local_id, relationships, scope, enclosing_class);
+        // Skip nested type declarations to avoid double-counting their method calls
+        match child.kind() {
+            "class_declaration" | "interface_declaration" | "enum_declaration"
+            | "record_declaration" | "annotation_type_declaration" => continue,
+            _ => collect_method_invocations(child, source, method_local_id, relationships, scope, enclosing_class),
+        }
     }
 }
 
