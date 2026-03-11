@@ -616,7 +616,7 @@ fn cmd_rename(
                     }
                 }
                 println!(
-                    "\n{} {} in {} {}",
+                    "\nDry run: {} {} in {} {}",
                     result.total_occurrences(),
                     if result.total_occurrences() == 1 {
                         "occurrence"
@@ -630,6 +630,17 @@ fn cmd_rename(
                         "files"
                     },
                 );
+                let escaped_pattern = pattern.replace('\'', "'\\''");
+                let escaped_new = new_name.replace('\'', "'\\''");
+                let mut apply_cmd = format!("codix rename '{}' '{}'", escaped_pattern, escaped_new);
+                if case_insensitive {
+                    apply_cmd.push_str(" -i");
+                }
+                if let Some(k) = &kind {
+                    apply_cmd.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''")));
+                }
+                apply_cmd.push_str(" --apply");
+                println!("\nTo apply: {}", apply_cmd);
             }
         }
         Format::Json => {
