@@ -20,20 +20,32 @@ codix impls Repository
 
 ## Commands
 
+**Project management**
+
 | Command | Description |
 |---------|-------------|
 | `codix init` | Initialize project and index all files |
 | `codix index` | Full reindex (drop and rebuild) |
 | `codix status` | Show index statistics (file count per language) |
 | `codix config` | Get or set configuration values (e.g. `index.languages`) |
+
+**Symbol lookup**
+
+| Command | Description |
+|---------|-------------|
 | `codix find <pattern>` | Find symbol definitions |
+| `codix symbols <file>` | List symbols defined in a file |
+| `codix package <pattern>` | List symbols in a package |
+
+**Relationships**
+
+| Command | Description |
+|---------|-------------|
 | `codix refs <pattern>` | Find symbols that reference a given symbol (extends, implements, calls, field types, annotations) |
 | `codix impls <pattern>` | Find implementations/subclasses |
 | `codix supers <pattern>` | Find supertypes (extends/implements) |
 | `codix callers <pattern>` | Find callers of a method (resolves receiver types) |
 | `codix callees <pattern>` | Find methods called by a method (resolves receiver types) |
-| `codix symbols <file>` | List symbols in a file |
-| `codix package <pattern>` | List symbols in a package |
 
 When multiple symbols match a pattern, codix shows each match with a copy-pasteable command using the fully qualified name.
 
