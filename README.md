@@ -4,8 +4,16 @@ A fast code symbol indexer built for AI coding agents. codix indexes your codeba
 
 ## Install
 
+From crates.io:
+
 ```bash
 cargo install codix
+```
+
+From source (latest development version):
+
+```bash
+cargo install --path .
 ```
 
 ## Quick Start
