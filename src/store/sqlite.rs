@@ -289,13 +289,13 @@ impl Store for SqliteStore {
         };
 
         // Apply precise glob matching to filter out SQL LIKE over-matches
+        let pat_lower = if case_insensitive { Some(pattern.to_lowercase()) } else { None };
         let results = rows.into_iter().filter(|sym| {
             let sig = sym.signature.as_deref().unwrap_or("");
-            if case_insensitive {
-                let pat_lower = pattern.to_lowercase();
-                glob_match::glob_match(&pat_lower, &sym.name.to_lowercase())
-                    || glob_match::glob_match(&pat_lower, &sym.qualified_name.to_lowercase())
-                    || glob_match::glob_match(&pat_lower, &sig.to_lowercase())
+            if let Some(ref pat) = pat_lower {
+                glob_match::glob_match(pat, &sym.name.to_lowercase())
+                    || glob_match::glob_match(pat, &sym.qualified_name.to_lowercase())
+                    || glob_match::glob_match(pat, &sig.to_lowercase())
             } else {
                 glob_match::glob_match(&pattern, &sym.name)
                     || glob_match::glob_match(&pattern, &sym.qualified_name)
@@ -321,17 +321,16 @@ impl Store for SqliteStore {
     }
 
     fn find_implementations(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>> {
-        let extends = RelationshipKind::Extends.as_str();
-        let implements = RelationshipKind::Implements.as_str();
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
              s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
              FROM relationships r \
              JOIN symbols s ON s.id = r.source_symbol_id \
              JOIN files f ON s.file_id = f.id \
-             WHERE r.target_symbol_id = ? AND r.kind IN ('extends', 'implements')"
-        )?;
-        let _ = (extends, implements); // used as string literals above
+             WHERE r.target_symbol_id = ? AND r.kind IN ('{}', '{}')",
+            RelationshipKind::Extends.as_str(),
+            RelationshipKind::Implements.as_str()
+        ))?;
         let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)

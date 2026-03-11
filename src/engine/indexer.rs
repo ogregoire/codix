@@ -155,7 +155,7 @@ fn index_file(root: &Path, path: &Path, plugin: &dyn LanguagePlugin, store: &dyn
     let mtime = std::fs::metadata(path)?
         .modified()?
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs() as i64;
     let hash = compute_sha256(&source);
     let file_id = store.upsert_file(&rel_path, mtime, Some(&hash), plugin.name())?;
