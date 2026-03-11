@@ -39,6 +39,7 @@
 
 - [x] Add `--verbose` / `--debug` flag for diagnostics (show what files were reindexed, timing info)
 - [x] Add `codix status` command (show index stats: file count, symbol count, stale files)
+- [ ] Add `codix plugins` command (list registered plugins with name, display name, and description)
 - [ ] Add `codix tree <symbol>` for transitive dependency graphs
 - [ ] Support multiple patterns in a single query
 - [ ] Allow plugins to access their own config via `plugin.<language>.<key>` namespace (e.g. `plugin.java.source-level 17`)
