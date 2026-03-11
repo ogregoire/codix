@@ -6,13 +6,22 @@ description = "A fast code symbol indexer for AI coding agents"
 license = "MIT"
 repository = "https://github.com/ogregoire/codix"
 
+[features]
+default = ["lang-go", "lang-java", "lang-javascript", "lang-python", "lang-rust"]
+lang-go = ["dep:tree-sitter-go"]
+lang-java = ["dep:tree-sitter-java"]
+lang-javascript = ["dep:tree-sitter-typescript"]
+lang-python = ["dep:tree-sitter-python"]
+lang-rust = ["dep:tree-sitter-rust"]
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tree-sitter = "0.24"
-tree-sitter-go = "0.23"
-tree-sitter-rust = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-typescript = "0.23"
+tree-sitter-go = { version = "0.23", optional = true }
+tree-sitter-rust = { version = "0.23", optional = true }
+tree-sitter-java = { version = "0.23", optional = true }
+tree-sitter-typescript = { version = "0.23", optional = true }
+tree-sitter-python = { version = "0.23", optional = true }
 rusqlite = { version = "0.31", features = ["bundled"] }
 glob-match = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -22,7 +31,6 @@ anyhow = "1"
 pathdiff = "0.2"
 sha2 = "0.10"
 hex = "0.4"
-tree-sitter-python = "0.23"
 
 [dev-dependencies]
 tempfile = "3"

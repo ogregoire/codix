@@ -1,10 +1,15 @@
 use std::path::Path;
 use crate::model::*;
 
+#[cfg(feature = "lang-go")]
 pub mod go;
+#[cfg(feature = "lang-java")]
 pub mod java;
+#[cfg(feature = "lang-javascript")]
 pub mod js;
+#[cfg(feature = "lang-python")]
 pub mod python;
+#[cfg(feature = "lang-rust")]
 pub mod rust;
 
 pub trait LanguagePlugin {
@@ -27,10 +32,15 @@ pub struct PluginRegistry {
 impl PluginRegistry {
     pub fn new() -> Self {
         let mut registry = Self { plugins: Vec::new() };
+        #[cfg(feature = "lang-go")]
         registry.register(Box::new(go::GoPlugin));
+        #[cfg(feature = "lang-java")]
         registry.register(Box::new(java::JavaPlugin));
+        #[cfg(feature = "lang-javascript")]
         registry.register(Box::new(js::JsPlugin));
+        #[cfg(feature = "lang-python")]
         registry.register(Box::new(python::PythonPlugin));
+        #[cfg(feature = "lang-rust")]
         registry.register(Box::new(rust::RustPlugin));
         registry
     }
