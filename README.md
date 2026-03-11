@@ -89,7 +89,7 @@ src/main/java/com/foo/UserService.java:6  public method save(Person)
 
 ## Language Support
 
-Currently supported: **Java**, **JavaScript/TypeScript**, **Go**
+Currently supported: **Go**, **Java**, **JavaScript/TypeScript**, **Python**, **Rust**
 
 The architecture uses a plugin trait (`LanguagePlugin`) that makes adding new languages straightforward — each language provides its tree-sitter grammar and symbol extraction logic.
 

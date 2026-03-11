@@ -18,7 +18,7 @@
 
 - [ ] Add Kotlin plugin
 - [x] Add TypeScript/JavaScript plugin
-- [ ] Add Python plugin
+- [x] Add Python plugin
 - [x] Add Go plugin
 
 ## Ecosystem Plugins
