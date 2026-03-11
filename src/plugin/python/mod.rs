@@ -468,7 +468,7 @@ fn collect_type_names(node: tree_sitter::Node, source: &[u8], out: &mut Vec<Stri
 }
 
 fn is_user_type(name: &str) -> bool {
-    let base = name.split('.').last().unwrap_or(name);
+    let base = name.split('.').next_back().unwrap_or(name);
     base.starts_with(|c: char| c.is_uppercase())
 }
 

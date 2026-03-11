@@ -437,6 +437,7 @@ fn extract_formal_params(node: tree_sitter::Node, source: &[u8]) -> String {
     params.join(",")
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_method(
     node: tree_sitter::Node,
     source: &[u8],
@@ -494,6 +495,7 @@ fn extract_method(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_constructor(
     node: tree_sitter::Node,
     type_node: tree_sitter::Node,
@@ -681,6 +683,7 @@ fn collect_type_identifiers(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn extract_body_relationships(
     body_node: tree_sitter::Node,
     source: &[u8],

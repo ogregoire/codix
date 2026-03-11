@@ -92,7 +92,7 @@ fn cmd_init(verbose: bool, configs: Vec<String>) -> anyhow::Result<()> {
     // Parse and validate configs before creating the project
     let registry = PluginRegistry::new();
     let mut parsed_configs = Vec::new();
-    if configs.len() % 2 != 0 {
+    if !configs.len().is_multiple_of(2) {
         anyhow::bail!("Config arguments must be key-value pairs (e.g. index.languages java,go)");
     }
     for pair in configs.chunks_exact(2) {
@@ -391,9 +391,8 @@ fn cmd_config(key: Option<String>, value: Option<String>, remove: bool, all: boo
         }
         None => {
             let val = config::read_value(&root, section, name)?;
-            match val {
-                Some(v) => println!("{}", v),
-                None => {}
+            if let Some(v) = val {
+                println!("{}", v);
             }
         }
     }
