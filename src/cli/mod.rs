@@ -174,5 +174,8 @@ pub enum Commands {
         case_insensitive: bool,
         #[arg(short = 'k', long)]
         kind: Option<String>,
+        /// Restrict to symbol defined in a specific language (e.g. java, python)
+        #[arg(short = 'l', long)]
+        lang: Option<String>,
     },
 }

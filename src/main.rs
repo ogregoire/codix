@@ -87,6 +87,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             format,
             case_insensitive,
             kind,
+            lang,
         } => cmd_rename(
             pattern,
             new_name,
@@ -94,6 +95,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             format,
             case_insensitive,
             kind,
+            lang,
             verbose,
         ),
     }
@@ -514,6 +516,7 @@ fn load_languages(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn cmd_rename(
     pattern: String,
     new_name: String,
@@ -521,6 +524,7 @@ fn cmd_rename(
     format: Format,
     case_insensitive: bool,
     kind: Option<String>,
+    lang: Option<String>,
     verbose: bool,
 ) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
@@ -532,7 +536,19 @@ fn cmd_rename(
         case_insensitive,
         kind: parsed_kind,
     };
-    let matches = store.find_symbol(&query)?;
+    let mut matches = store.find_symbol(&query)?;
+
+    // Filter by language if specified
+    if let Some(ref lang) = lang {
+        matches.retain(|sym| {
+            store
+                .get_file(&sym.file_path)
+                .ok()
+                .flatten()
+                .map(|f| f.language == *lang)
+                .unwrap_or(false)
+        });
+    }
 
     if matches.is_empty() {
         anyhow::bail!(
@@ -553,13 +569,30 @@ fn cmd_rename(
             Format::Json => flags.push_str(" -f json"),
             Format::Text => {}
         }
+        // Check if qualified names collide — if so, add --lang to disambiguate
+        let mut seen_qnames: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for sym in &matches {
+            *seen_qnames.entry(&sym.qualified_name).or_insert(0) += 1;
+        }
         let mut msg = format!("Multiple symbols match '{}'. Be more specific:\n", pattern);
         for sym in &matches {
             let path = project::display_path(&root, &cwd, &sym.file_path);
             let label = sym.signature.as_deref().unwrap_or(&sym.name);
             let escaped_name = sym.qualified_name.replace('\'', "'\\''");
+            let lang_flag = if seen_qnames.get(sym.qualified_name.as_str()) > Some(&1) {
+                let file_lang = store
+                    .get_file(&sym.file_path)
+                    .ok()
+                    .flatten()
+                    .map(|f| f.language)
+                    .unwrap_or_default();
+                format!(" -l {}", file_lang)
+            } else {
+                String::new()
+            };
             msg.push_str(&format!(
-                "  {}:{}  {} {} {}\n  \u{2192} codix rename '{}' '{}'{}\n",
+                "  {}:{}  {} {} {}\n  \u{2192} codix rename '{}' '{}'{}{}\n",
                 path,
                 sym.line,
                 sym.visibility.as_str(),
@@ -567,7 +600,8 @@ fn cmd_rename(
                 label,
                 escaped_name,
                 new_name,
-                flags
+                flags,
+                lang_flag
             ));
         }
         anyhow::bail!("{}", msg.trim_end());
@@ -638,6 +672,9 @@ fn cmd_rename(
                 }
                 if let Some(k) = &kind {
                     apply_cmd.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''")));
+                }
+                if let Some(ref l) = lang {
+                    apply_cmd.push_str(&format!(" -l {}", l));
                 }
                 apply_cmd.push_str(" --apply");
                 println!("\nTo apply: {}", apply_cmd);
