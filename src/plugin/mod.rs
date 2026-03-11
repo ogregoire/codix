@@ -1,6 +1,7 @@
 use std::path::Path;
 use crate::model::*;
 
+pub mod go;
 pub mod java;
 pub mod js;
 
@@ -24,6 +25,7 @@ pub struct PluginRegistry {
 impl PluginRegistry {
     pub fn new() -> Self {
         let mut registry = Self { plugins: Vec::new() };
+        registry.register(Box::new(go::GoPlugin));
         registry.register(Box::new(java::JavaPlugin));
         registry.register(Box::new(js::JsPlugin));
         registry

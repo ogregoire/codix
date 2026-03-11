@@ -527,3 +527,76 @@ fn test_js_init_indexes_js_files() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Indexed 2 JavaScript files"), "stdout was: {}", stdout);
 }
+
+fn setup_go_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/app.go"),
+        r#"package main
+
+type Repository interface {
+	Save(item Item)
+}
+
+type Item struct {
+	Name string
+}
+
+type Service struct {
+	repo Repository
+}
+
+func (s *Service) Process() {
+	s.repo.Save(Item{})
+}
+
+func NewService(r Repository) *Service {
+	return &Service{repo: r}
+}
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_go_struct_and_interface() {
+    let tmp = TempDir::new().unwrap();
+    setup_go_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/app.go"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Repository"), "should contain Repository interface");
+    assert!(stdout.contains("interface"), "should show interface kind");
+    assert!(stdout.contains("Item"), "should contain Item struct");
+    assert!(stdout.contains("struct"), "should show struct kind");
+    assert!(stdout.contains("Service"), "should contain Service struct");
+    assert!(stdout.contains("Process"), "should contain Process method");
+    assert!(stdout.contains("NewService"), "should contain NewService function");
+}
+
+#[test]
+fn test_go_field_type_refs() {
+    let tmp = TempDir::new().unwrap();
+    setup_go_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["refs", "main.Repository"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+}
+
+#[test]
+fn test_go_init_indexes_files() {
+    let tmp = TempDir::new().unwrap();
+    setup_go_project(tmp.path());
+    let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Indexed 1 Go file"), "stdout was: {}", stdout);
+}

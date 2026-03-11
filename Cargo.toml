@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 tree-sitter = "0.24"
+tree-sitter-go = "0.23"
 tree-sitter-java = "0.23"
 tree-sitter-typescript = "0.23"
 rusqlite = { version = "0.31", features = ["bundled"] }
