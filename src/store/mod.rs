@@ -35,6 +35,11 @@ pub trait Store {
     fn symbols_in_file(&self, file_path: &str) -> Result<Vec<Symbol>>;
     fn symbols_in_package(&self, package: &str, query: &SymbolQuery) -> Result<Vec<Symbol>>;
 
+    fn update_symbol_name(&self, symbol_id: SymbolId, new_name: &str, new_qualified_name: &str, new_signature: Option<&str>) -> Result<()>;
+    fn update_child_qualified_names(&self, parent_symbol_id: SymbolId, old_prefix: &str, new_prefix: &str) -> Result<()>;
+    fn update_relationship_targets(&self, old_qualified_name: &str, new_qualified_name: &str) -> Result<()>;
+    fn update_file_mtime(&self, file_id: FileId, new_mtime: i64) -> Result<()>;
+
     fn index_stats(&self) -> Result<BTreeMap<String, LanguageStats>>;
 
     fn begin_transaction(&self) -> Result<()>;

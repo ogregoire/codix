@@ -445,6 +445,42 @@ impl Store for SqliteStore {
         Ok(results)
     }
 
+    fn update_symbol_name(&self, symbol_id: SymbolId, new_name: &str, new_qualified_name: &str, new_signature: Option<&str>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE symbols SET name = ?1, qualified_name = ?2, signature = ?3 WHERE id = ?4",
+            params![new_name, new_qualified_name, new_signature, symbol_id],
+        )?;
+        Ok(())
+    }
+
+    fn update_child_qualified_names(&self, parent_symbol_id: SymbolId, old_prefix: &str, new_prefix: &str) -> Result<()> {
+        // Note: this updates direct children only. Deeply nested inner classes
+        // (e.g. com.foo.Foo.Inner.method) would need recursive cascading.
+        // Acceptable for v1 since inner class renames are not a primary use case.
+        self.conn.execute(
+            "UPDATE symbols SET qualified_name = ?1 || substr(qualified_name, ?2) \
+             WHERE parent_symbol_id = ?3 AND qualified_name LIKE ?4 || '%'",
+            params![new_prefix, old_prefix.len() as i64 + 1, parent_symbol_id, old_prefix],
+        )?;
+        Ok(())
+    }
+
+    fn update_relationship_targets(&self, old_qualified_name: &str, new_qualified_name: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE relationships SET target_qualified_name = ?1 WHERE target_qualified_name = ?2",
+            params![new_qualified_name, old_qualified_name],
+        )?;
+        Ok(())
+    }
+
+    fn update_file_mtime(&self, file_id: FileId, new_mtime: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE files SET mtime = ?1 WHERE id = ?2",
+            params![new_mtime, file_id],
+        )?;
+        Ok(())
+    }
+
     fn index_stats(&self) -> Result<BTreeMap<String, LanguageStats>> {
         let mut stats: BTreeMap<String, LanguageStats> = BTreeMap::new();
 
@@ -977,5 +1013,112 @@ mod tests {
         let callees = store.find_callees(dowork_id).unwrap();
         assert_eq!(callees.len(), 1);
         assert_eq!(callees[0].name, "save");
+    }
+
+    #[test]
+    fn test_update_symbol_name() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let syms = vec![
+            ExtractedSymbol {
+                local_id: 0, name: "Foo".into(), signature: None,
+                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+                visibility: Visibility::new("public"),
+                line: 1, column: 0, end_line: 10, end_column: 1,
+                parent_local_id: None, package: "com.foo".into(), type_text: None,
+            },
+            ExtractedSymbol {
+                local_id: 1, name: "save".into(), signature: Some("save(Person)".into()),
+                qualified_name: "com.foo.Foo.save(Person)".into(), kind: SymbolKind::new("method"),
+                visibility: Visibility::new("public"),
+                line: 3, column: 4, end_line: 5, end_column: 5,
+                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+            },
+        ];
+        let ids = store.insert_symbols(fid, &syms).unwrap();
+
+        store.update_symbol_name(ids[1], "findById", "com.foo.Foo.findById(Person)", Some("findById(Person)")).unwrap();
+
+        let q = SymbolQuery { pattern: "findById".into(), case_insensitive: false, kind: None };
+        let results = store.find_symbol(&q).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].name, "findById");
+        assert_eq!(results[0].qualified_name, "com.foo.Foo.findById(Person)");
+        assert_eq!(results[0].signature.as_deref(), Some("findById(Person)"));
+    }
+
+    #[test]
+    fn test_update_child_qualified_names() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let syms = vec![
+            ExtractedSymbol {
+                local_id: 0, name: "Foo".into(), signature: None,
+                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+                visibility: Visibility::new("public"),
+                line: 1, column: 0, end_line: 10, end_column: 1,
+                parent_local_id: None, package: "com.foo".into(), type_text: None,
+            },
+            ExtractedSymbol {
+                local_id: 1, name: "save".into(), signature: Some("save()".into()),
+                qualified_name: "com.foo.Foo.save()".into(), kind: SymbolKind::new("method"),
+                visibility: Visibility::new("public"),
+                line: 3, column: 4, end_line: 5, end_column: 5,
+                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+            },
+        ];
+        let ids = store.insert_symbols(fid, &syms).unwrap();
+
+        store.update_child_qualified_names(ids[0], "com.foo.Foo", "com.foo.Bar").unwrap();
+
+        let q = SymbolQuery { pattern: "save".into(), case_insensitive: false, kind: None };
+        let results = store.find_symbol(&q).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].qualified_name, "com.foo.Bar.save()");
+    }
+
+    #[test]
+    fn test_update_relationship_targets() {
+        let store = test_store();
+        let f1 = store.upsert_file("Foo.java", 1, None, "java").unwrap();
+        let f2 = store.upsert_file("Bar.java", 1, None, "java").unwrap();
+        let syms1 = vec![ExtractedSymbol {
+            local_id: 0, name: "Foo".into(), signature: None,
+            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+            visibility: Visibility::new("public"),
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(), type_text: None,
+        }];
+        let ids1 = store.insert_symbols(f1, &syms1).unwrap();
+        let syms2 = vec![ExtractedSymbol {
+            local_id: 0, name: "Bar".into(), signature: None,
+            qualified_name: "com.foo.Bar".into(), kind: SymbolKind::new("class"),
+            visibility: Visibility::new("public"),
+            line: 1, column: 0, end_line: 10, end_column: 1,
+            parent_local_id: None, package: "com.foo".into(), type_text: None,
+        }];
+        let ids2 = store.insert_symbols(f2, &syms2).unwrap();
+        let map: Vec<(usize, SymbolId)> = vec![(0, ids2[0])];
+        let rels = vec![ExtractedRelationship {
+            source_local_id: 0,
+            target_qualified_name: "com.foo.Foo".into(),
+            kind: RelationshipKind::Extends,
+        }];
+        store.insert_relationships(f2, &map, &rels).unwrap();
+        store.resolve_relationships().unwrap();
+
+        store.update_relationship_targets("com.foo.Foo", "com.foo.Baz").unwrap();
+
+        let refs = store.find_references(ids1[0]).unwrap();
+        assert_eq!(refs.len(), 1); // still linked by target_symbol_id
+    }
+
+    #[test]
+    fn test_update_file_mtime() {
+        let store = test_store();
+        let fid = store.upsert_file("Foo.java", 1000, None, "java").unwrap();
+        store.update_file_mtime(fid, 2000).unwrap();
+        let file = store.get_file("Foo.java").unwrap().unwrap();
+        assert_eq!(file.mtime, 2000);
     }
 }
