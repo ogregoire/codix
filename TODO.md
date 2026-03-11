@@ -38,7 +38,7 @@
 ## CLI Improvements
 
 - [x] Add `--verbose` / `--debug` flag for diagnostics (show what files were reindexed, timing info)
-- [ ] Add `codix status` command (show index stats: file count, symbol count, stale files)
+- [x] Add `codix status` command (show index stats: file count, symbol count, stale files)
 - [ ] Add `codix tree <symbol>` for transitive dependency graphs
 - [ ] Support multiple patterns in a single query
 

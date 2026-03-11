@@ -29,6 +29,7 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::Init => cmd_init(verbose),
         Commands::Index => cmd_index(verbose),
+        Commands::Status => cmd_status(verbose),
         Commands::Find {
             pattern,
             format,
@@ -100,6 +101,23 @@ fn cmd_index(verbose: bool) -> anyhow::Result<()> {
     print_index_counts(&counts);
     if verbose {
         eprintln!("[verbose] full index in {}ms", start.elapsed().as_millis());
+    }
+    Ok(())
+}
+
+fn cmd_status(verbose: bool) -> anyhow::Result<()> {
+    let (store, _root) = open_store_and_reindex(verbose)?;
+    let registry = PluginRegistry::new();
+    let stats = store.index_stats()?;
+
+    if stats.is_empty() {
+        println!("No files indexed.");
+        return Ok(());
+    }
+
+    for (lang, ls) in &stats {
+        let display = registry.display_name_for(lang);
+        println!("{} {} {}", ls.files, display, if ls.files == 1 { "file" } else { "files" });
     }
     Ok(())
 }

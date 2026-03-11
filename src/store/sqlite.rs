@@ -1,7 +1,8 @@
+use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::{Connection, params};
 use crate::model::*;
-use crate::store::Store;
+use crate::store::{Store, LanguageStats};
 
 fn glob_to_like(pattern: &str) -> String {
     let mut like = String::with_capacity(pattern.len());
@@ -442,6 +443,62 @@ impl Store for SqliteStore {
         }).collect();
 
         Ok(results)
+    }
+
+    fn index_stats(&self) -> Result<BTreeMap<String, LanguageStats>> {
+        let mut stats: BTreeMap<String, LanguageStats> = BTreeMap::new();
+
+        // File counts per language
+        let mut stmt = self.conn.prepare("SELECT language, COUNT(*) FROM files GROUP BY language")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+        })?;
+        for row in rows {
+            let (lang, count) = row?;
+            stats.entry(lang).or_default().files = count;
+        }
+
+        // Symbol counts per language and kind
+        let mut stmt = self.conn.prepare(
+            "SELECT f.language, s.kind, COUNT(*) FROM symbols s \
+             JOIN files f ON s.file_id = f.id GROUP BY f.language, s.kind"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?))
+        })?;
+        for row in rows {
+            let (lang, kind, count) = row?;
+            stats.entry(lang).or_default().symbols.insert(kind, count);
+        }
+
+        // Relationship counts per language and kind
+        let mut stmt = self.conn.prepare(
+            "SELECT f.language, r.kind, COUNT(*) FROM relationships r \
+             JOIN files f ON r.file_id = f.id GROUP BY f.language, r.kind"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?))
+        })?;
+        for row in rows {
+            let (lang, kind, count) = row?;
+            stats.entry(lang).or_default().relationships.insert(kind, count);
+        }
+
+        // Unresolved relationships per language
+        let mut stmt = self.conn.prepare(
+            "SELECT f.language, COUNT(*) FROM relationships r \
+             JOIN files f ON r.file_id = f.id \
+             WHERE r.target_symbol_id IS NULL GROUP BY f.language"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
+        })?;
+        for row in rows {
+            let (lang, count) = row?;
+            stats.entry(lang).or_default().unresolved = count;
+        }
+
+        Ok(stats)
     }
 
     fn begin_transaction(&self) -> Result<()> {

@@ -98,6 +98,8 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
+    /// Show index statistics (file count, symbol count, relationships per language)
+    Status,
     /// List symbols in a package
     Package {
         /// Package name pattern (e.g. com.foo, com.foo.*)

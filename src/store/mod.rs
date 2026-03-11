@@ -1,7 +1,16 @@
+use std::collections::BTreeMap;
 use anyhow::Result;
 use crate::model::*;
 
 pub mod sqlite;
+
+#[derive(Debug, Default)]
+pub struct LanguageStats {
+    pub files: u64,
+    pub symbols: BTreeMap<String, u64>,
+    pub relationships: BTreeMap<String, u64>,
+    pub unresolved: u64,
+}
 
 pub trait Store {
     fn upsert_file(&self, path: &str, mtime: i64, hash: Option<&str>, language: &str) -> Result<FileId>;
@@ -25,6 +34,8 @@ pub trait Store {
     fn find_callees(&self, symbol_id: SymbolId) -> Result<Vec<Symbol>>;
     fn symbols_in_file(&self, file_path: &str) -> Result<Vec<Symbol>>;
     fn symbols_in_package(&self, package: &str, query: &SymbolQuery) -> Result<Vec<Symbol>>;
+
+    fn index_stats(&self) -> Result<BTreeMap<String, LanguageStats>>;
 
     fn begin_transaction(&self) -> Result<()>;
     fn commit_transaction(&self) -> Result<()>;

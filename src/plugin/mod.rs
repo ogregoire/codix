@@ -40,4 +40,11 @@ impl PluginRegistry {
     pub fn all_extensions(&self) -> Vec<&str> {
         self.plugins.iter().flat_map(|p| p.file_extensions()).copied().collect()
     }
+
+    pub fn display_name_for(&self, name: &str) -> String {
+        self.plugins.iter()
+            .find(|p| p.name() == name)
+            .map(|p| p.display_name().to_string())
+            .unwrap_or_else(|| name.to_string())
+    }
 }
