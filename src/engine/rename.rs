@@ -164,45 +164,51 @@ pub fn apply_rename(
         std::fs::write(&abs_path, &modified)?;
     }
 
-    // Update store
-    let old_name = &symbol.name;
-    let old_qualified = &symbol.qualified_name;
-    let new_qualified = build_new_qualified_name(old_qualified, old_name, new_name);
-    let new_signature = symbol.signature.as_ref().map(|sig| {
-        build_new_signature(sig, old_name, new_name)
-    });
+    // Update store atomically
+    store.begin_transaction()?;
+    let store_result = (|| -> Result<()> {
+        let old_name = &symbol.name;
+        let old_qualified = &symbol.qualified_name;
+        let new_qualified = build_new_qualified_name(old_qualified, old_name, new_name);
+        let new_signature = symbol.signature.as_ref().map(|sig| {
+            build_new_signature(sig, old_name, new_name)
+        });
 
-    store.update_symbol_name(
-        symbol.id,
-        new_name,
-        &new_qualified,
-        new_signature.as_deref(),
-    )?;
+        store.update_symbol_name(
+            symbol.id,
+            new_name,
+            &new_qualified,
+            new_signature.as_deref(),
+        )?;
 
-    // For class renames, cascade to children
-    let kind_str = symbol.kind.as_str();
-    if kind_str == "class" || kind_str == "interface" || kind_str == "enum"
-        || kind_str == "record" || kind_str == "annotation" {
-        store.update_child_qualified_names(symbol.id, old_qualified, &new_qualified)?;
-    }
+        // For class renames, cascade to children
+        let kind_str = symbol.kind.as_str();
+        if kind_str == "class" || kind_str == "interface" || kind_str == "enum"
+            || kind_str == "record" || kind_str == "annotation" {
+            store.update_child_qualified_names(symbol.id, old_qualified, &new_qualified)?;
+        }
 
-    store.update_relationship_targets(old_qualified, &new_qualified)?;
+        store.update_relationship_targets(old_qualified, &new_qualified)?;
 
-    // Update mtimes for modified files
-    for file_occ in &result.changes {
-        let abs_path = root.join(&file_occ.file_path);
-        if let Ok(metadata) = std::fs::metadata(&abs_path) {
-            if let Ok(mtime) = metadata.modified() {
-                let mtime_secs = mtime
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64;
-                if let Some(file_rec) = store.get_file(&file_occ.file_path)? {
-                    store.update_file_mtime(file_rec.id, mtime_secs)?;
+        // Update mtimes for modified files
+        for file_occ in &result.changes {
+            let abs_path = root.join(&file_occ.file_path);
+            if let Ok(metadata) = std::fs::metadata(&abs_path) {
+                if let Ok(mtime) = metadata.modified() {
+                    let mtime_secs = mtime
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+                    if let Some(file_rec) = store.get_file(&file_occ.file_path)? {
+                        store.update_file_mtime(file_rec.id, mtime_secs)?;
+                    }
                 }
             }
         }
-    }
+        Ok(())
+    })();
+    store.commit_transaction()?;
+    store_result?;
 
     Ok(())
 }
