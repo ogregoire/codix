@@ -17,7 +17,7 @@
 ## Language Support
 
 - [ ] Add Kotlin plugin
-- [ ] Add TypeScript/JavaScript plugin
+- [x] Add TypeScript/JavaScript plugin
 - [ ] Add Python plugin
 - [ ] Add Go plugin
 

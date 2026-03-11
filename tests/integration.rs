@@ -447,3 +447,83 @@ fn test_help_shows_all_commands() {
     assert!(stdout.contains("symbols"));
     assert!(stdout.contains("package"));
 }
+
+fn setup_js_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/app.js"),
+        r#"class App {
+    #name;
+
+    constructor(name) {
+        this.#name = name;
+    }
+
+    run() {
+        console.log(this.#name);
+    }
+}
+
+function main() {
+    const app = new App("codix");
+    app.run();
+}
+
+const helper = () => {
+    return 42;
+};
+"#,
+    ).unwrap();
+    fs::write(
+        dir.join("src/service.ts"),
+        r#"class Service extends App {
+    serve(): void {
+        this.run();
+    }
+}
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_js_class_extraction() {
+    let tmp = TempDir::new().unwrap();
+    setup_js_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/app.js"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("App"), "should contain App class");
+    assert!(stdout.contains("constructor"), "should contain constructor");
+    assert!(stdout.contains("run"), "should contain run method");
+    assert!(stdout.contains("main"), "should contain main function");
+    assert!(stdout.contains("helper"), "should contain helper function");
+    assert!(stdout.contains("function"), "should show function kind");
+}
+
+#[test]
+fn test_js_extends() {
+    let tmp = TempDir::new().unwrap();
+    setup_js_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["impls", "App"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Service"), "Service extends App");
+}
+
+#[test]
+fn test_js_init_indexes_js_files() {
+    let tmp = TempDir::new().unwrap();
+    setup_js_project(tmp.path());
+    let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Indexed 2 JavaScript files"), "stdout was: {}", stdout);
+}
