@@ -25,19 +25,18 @@ fn compute_sha256(data: &[u8]) -> String {
 }
 
 /// Discover all files the registry can handle, optionally filtered by language.
-pub fn discover_files(root: &Path, registry: &PluginRegistry, languages: Option<&[String]>) -> Vec<(PathBuf, String)> {
-    let extensions = match languages {
-        Some(langs) => registry.extensions_for_languages(langs),
-        None => registry.all_extensions(),
+/// Returns each file paired with the plugin that handles it.
+pub fn discover_files<'a>(root: &Path, registry: &'a PluginRegistry, languages: Option<&[String]>) -> Vec<(PathBuf, &'a dyn LanguagePlugin)> {
+    let plugins: Vec<&dyn LanguagePlugin> = match languages {
+        Some(langs) => registry.plugins_for_languages(langs),
+        None => registry.all_plugins(),
     };
     let mut result = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
         if path.starts_with(root.join(".codix")) { continue; }
-        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            if extensions.contains(&ext) {
-                result.push((path.to_path_buf(), ext.to_string()));
-            }
+        if let Some(plugin) = plugins.iter().find(|p| p.can_handle(path)) {
+            result.push((path.to_path_buf(), *plugin));
         }
     }
     result
@@ -51,10 +50,8 @@ pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry, lan
     store.begin_transaction()?;
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
-    for (path, ext) in &files {
-        let plugin = registry.plugin_for_extension(ext)
-                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
-        let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+    for (path, plugin) in &files {
+        let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, *plugin, store)?;
         if !wildcards.is_empty() {
             wildcard_map.insert(file_id, wildcards);
         }
@@ -93,7 +90,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
 
     // Add new or modified files
     let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
-    for (path, ext) in &disk_files {
+    for (path, plugin) in &disk_files {
         let rel_path = project::relative_to_root(root, path);
         let mtime = std::fs::metadata(path)?
             .modified()?
@@ -104,9 +101,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
         match store.get_file(&rel_path)? {
             None => {
                 // New file — index it
-                let plugin = registry.plugin_for_extension(ext)
-                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
-                let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+                let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, *plugin, store)?;
                 if !wildcards.is_empty() {
                     wildcard_map.insert(file_id, wildcards);
                 }
@@ -124,9 +119,7 @@ pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegi
                     // Content actually changed — reindex
                     store.delete_relationships_for_file(f.id)?;
                     store.delete_symbols_for_file(f.id)?;
-                    let plugin = registry.plugin_for_extension(ext)
-                    .ok_or_else(|| anyhow::anyhow!("No plugin for extension: {}", ext))?;
-                    let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, plugin, store)?;
+                    let (file_id, wildcards): (FileId, Vec<String>) = index_file(root, path, *plugin, store)?;
                     if !wildcards.is_empty() {
                         wildcard_map.insert(file_id, wildcards);
                     }
@@ -202,7 +195,7 @@ mod tests {
         let registry = PluginRegistry::new();
         let files = discover_files(&root, &registry, None);
         assert_eq!(files.len(), 2);
-        assert!(files.iter().all(|(_, ext)| ext == "java"));
+        assert!(files.iter().all(|(_, plugin)| plugin.name() == "java"));
     }
 
     #[test]

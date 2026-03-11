@@ -6,7 +6,7 @@ pub mod java;
 pub trait LanguagePlugin {
     fn name(&self) -> &str;
     fn display_name(&self) -> &str { self.name() }
-    fn file_extensions(&self) -> &[&str];
+    fn can_handle(&self, path: &Path) -> bool;
     fn tree_sitter_language(&self) -> tree_sitter::Language;
     fn extract_symbols(
         &self,
@@ -31,14 +31,8 @@ impl PluginRegistry {
         self.plugins.push(plugin);
     }
 
-    pub fn plugin_for_extension(&self, ext: &str) -> Option<&dyn LanguagePlugin> {
-        self.plugins.iter()
-            .find(|p| p.file_extensions().contains(&ext))
-            .map(|p| p.as_ref())
-    }
-
-    pub fn all_extensions(&self) -> Vec<&str> {
-        self.plugins.iter().flat_map(|p| p.file_extensions()).copied().collect()
+    pub fn all_plugins(&self) -> Vec<&dyn LanguagePlugin> {
+        self.plugins.iter().map(|p| p.as_ref()).collect()
     }
 
     pub fn display_name_for(&self, name: &str) -> String {
@@ -52,11 +46,10 @@ impl PluginRegistry {
         self.plugins.iter().map(|p| p.name()).collect()
     }
 
-    pub fn extensions_for_languages(&self, languages: &[String]) -> Vec<&str> {
+    pub fn plugins_for_languages(&self, languages: &[String]) -> Vec<&dyn LanguagePlugin> {
         self.plugins.iter()
             .filter(|p| languages.iter().any(|l| l == p.name()))
-            .flat_map(|p| p.file_extensions())
-            .copied()
+            .map(|p| p.as_ref())
             .collect()
     }
 }

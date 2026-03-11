@@ -13,8 +13,8 @@ impl LanguagePlugin for JavaPlugin {
         "Java"
     }
 
-    fn file_extensions(&self) -> &[&str] {
-        &["java"]
+    fn can_handle(&self, path: &Path) -> bool {
+        path.extension().and_then(|e| e.to_str()) == Some("java")
     }
 
     fn tree_sitter_language(&self) -> tree_sitter::Language {
