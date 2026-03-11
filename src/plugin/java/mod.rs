@@ -1451,4 +1451,146 @@ mod tests {
         assert_eq!(ctor.signature, Some("Point(int,int)".to_string()));
         assert_eq!(ctor.qualified_name, "com.foo.Point.Point(int,int)");
     }
+
+    fn find_occurrences(source: &str, name: &str, kind: &str) -> Vec<RenameOccurrence> {
+        let plugin = JavaPlugin;
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&tree_sitter_java::LANGUAGE.into()).unwrap();
+        let tree = parser.parse(source.as_bytes(), None).unwrap();
+        plugin.find_rename_occurrences(
+            &tree,
+            source.as_bytes(),
+            name,
+            &SymbolKind::new(kind),
+            "",
+        ).unwrap()
+    }
+
+    #[test]
+    fn test_rename_method_declaration_and_calls() {
+        let source = r#"
+package com.foo;
+public class UserService {
+    public void save(Person p) {
+        repo.save(p);
+    }
+    public void other() {
+        save(null);
+    }
+}
+"#;
+        let occs = find_occurrences(source, "save", "method");
+        assert_eq!(occs.len(), 3); // declaration + 2 call sites
+        let lines: Vec<i64> = occs.iter().map(|o| o.line).collect();
+        assert!(lines.contains(&4)); // declaration
+        assert!(lines.contains(&5)); // repo.save()
+        assert!(lines.contains(&8)); // save(null)
+    }
+
+    #[test]
+    fn test_rename_method_does_not_rename_param() {
+        let source = r#"
+package com.foo;
+public class Foo {
+    public void abc(int abc) {
+        System.out.println(abc);
+    }
+}
+"#;
+        let occs = find_occurrences(source, "abc", "method");
+        assert_eq!(occs.len(), 1); // only the method declaration
+        assert_eq!(occs[0].line, 4);
+    }
+
+    #[test]
+    fn test_rename_class_declaration_and_constructor() {
+        let source = r#"
+package com.foo;
+public class UserService {
+    public UserService() {}
+    public UserService(String name) {}
+}
+"#;
+        let occs = find_occurrences(source, "UserService", "class");
+        assert_eq!(occs.len(), 3); // class decl + 2 constructors
+    }
+
+    #[test]
+    fn test_rename_class_type_usages() {
+        let source = r#"
+package com.foo;
+import com.bar.UserService;
+public class Client {
+    private UserService service;
+    public UserService getService() { return service; }
+    public void run() {
+        UserService s = new UserService();
+    }
+}
+"#;
+        let occs = find_occurrences(source, "UserService", "class");
+        // import, field type, return type, local type, new expression
+        assert!(occs.len() >= 4);
+    }
+
+    #[test]
+    fn test_rename_field_declaration_and_access() {
+        let source = r#"
+package com.foo;
+public class Foo {
+    private int count;
+    public void inc() {
+        this.count = this.count + 1;
+    }
+}
+"#;
+        let occs = find_occurrences(source, "count", "field");
+        assert_eq!(occs.len(), 3); // declaration + 2 field accesses
+    }
+
+    #[test]
+    fn test_rename_field_does_not_rename_method() {
+        let source = r#"
+package com.foo;
+public class Foo {
+    private int save;
+    public void save() {}
+    public void run() {
+        save();
+        this.save = 1;
+    }
+}
+"#;
+        let field_occs = find_occurrences(source, "save", "field");
+        let method_occs = find_occurrences(source, "save", "method");
+        // field: declaration + this.save access
+        assert_eq!(field_occs.len(), 2);
+        // method: declaration + save() call
+        assert_eq!(method_occs.len(), 2);
+    }
+
+    #[test]
+    fn test_rename_class_extends_implements() {
+        let source = r#"
+package com.foo;
+public class Child extends Parent {
+}
+"#;
+        let occs = find_occurrences(source, "Parent", "class");
+        assert_eq!(occs.len(), 1); // extends clause type_identifier
+    }
+
+    #[test]
+    fn test_rename_super_method_invocation() {
+        let source = r#"
+package com.foo;
+public class Child extends Parent {
+    public void save() {
+        super.save();
+    }
+}
+"#;
+        let occs = find_occurrences(source, "save", "method");
+        assert_eq!(occs.len(), 2); // declaration + super.save()
+    }
 }
