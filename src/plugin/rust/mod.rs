@@ -1,7 +1,7 @@
+use super::LanguagePlugin;
+use crate::model::*;
 use std::collections::HashMap;
 use std::path::Path;
-use crate::model::*;
-use super::LanguagePlugin;
 
 pub struct RustPlugin;
 
@@ -52,7 +52,13 @@ impl LanguagePlugin for RustPlugin {
                     extract_function(child, source, &mut symbols, &mut relationships, &import_map);
                 }
                 "type_item" => {
-                    extract_type_alias(child, source, &mut symbols, &mut relationships, &import_map);
+                    extract_type_alias(
+                        child,
+                        source,
+                        &mut symbols,
+                        &mut relationships,
+                        &import_map,
+                    );
                 }
                 _ => {}
             }
@@ -68,7 +74,10 @@ impl LanguagePlugin for RustPlugin {
 
 // --- Use declaration parsing ---
 
-fn parse_use_declarations(root: tree_sitter::Node, source: &[u8]) -> (HashMap<String, String>, Vec<String>) {
+fn parse_use_declarations(
+    root: tree_sitter::Node,
+    source: &[u8],
+) -> (HashMap<String, String>, Vec<String>) {
     let mut import_map = HashMap::new();
     let mut wildcards = Vec::new();
     let mut cursor = root.walk();
@@ -94,12 +103,18 @@ fn parse_use_tree(
     match node.kind() {
         "use_as_clause" => {
             // use path::Type as Alias;
-            let path = node.child_by_field_name("path")
+            let path = node
+                .child_by_field_name("path")
                 .and_then(|n| n.utf8_text(source).ok());
-            let alias = node.child_by_field_name("alias")
+            let alias = node
+                .child_by_field_name("alias")
                 .and_then(|n| n.utf8_text(source).ok());
             if let (Some(path), Some(alias)) = (path, alias) {
-                let full_path = if prefix.is_empty() { path.to_string() } else { format!("{}::{}", prefix, path) };
+                let full_path = if prefix.is_empty() {
+                    path.to_string()
+                } else {
+                    format!("{}::{}", prefix, path)
+                };
                 import_map.insert(alias.to_string(), full_path);
             }
         }
@@ -107,7 +122,13 @@ fn parse_use_tree(
             // use path::{A, B};
             let path_node = node.child_by_field_name("path");
             let new_prefix = match path_node.and_then(|n| n.utf8_text(source).ok()) {
-                Some(p) => if prefix.is_empty() { p.to_string() } else { format!("{}::{}", prefix, p) },
+                Some(p) => {
+                    if prefix.is_empty() {
+                        p.to_string()
+                    } else {
+                        format!("{}::{}", prefix, p)
+                    }
+                }
                 None => prefix.to_string(),
             };
             if let Some(list) = node.child_by_field_name("list") {
@@ -121,7 +142,11 @@ fn parse_use_tree(
             // use path::*;
             if let Some(path_node) = node.child(0) {
                 if let Ok(path) = path_node.utf8_text(source) {
-                    let full_path = if prefix.is_empty() { path.to_string() } else { format!("{}::{}", prefix, path) };
+                    let full_path = if prefix.is_empty() {
+                        path.to_string()
+                    } else {
+                        format!("{}::{}", prefix, path)
+                    };
                     wildcards.push(full_path);
                 }
             }
@@ -129,7 +154,11 @@ fn parse_use_tree(
         "scoped_identifier" | "identifier" => {
             // Simple use path::Type;
             if let Ok(text) = node.utf8_text(source) {
-                let full_path = if prefix.is_empty() { text.to_string() } else { format!("{}::{}", prefix, text) };
+                let full_path = if prefix.is_empty() {
+                    text.to_string()
+                } else {
+                    format!("{}::{}", prefix, text)
+                };
                 let simple = text.rsplit("::").next().unwrap_or(text);
                 import_map.insert(simple.to_string(), full_path);
             }
@@ -201,7 +230,8 @@ fn extract_type_names(node: tree_sitter::Node, source: &[u8], out: &mut Vec<Stri
             } else {
                 let mut cursor = node.walk();
                 for child in node.children(&mut cursor) {
-                    if child.kind() == "type_identifier" || child.kind() == "scoped_type_identifier" {
+                    if child.kind() == "type_identifier" || child.kind() == "scoped_type_identifier"
+                    {
                         if let Ok(s) = child.utf8_text(source) {
                             out.push(s.to_string());
                         }
@@ -281,7 +311,15 @@ fn extract_struct(
             let mut field_cursor = child.walk();
             for field in child.children(&mut field_cursor) {
                 if field.kind() == "field_declaration" {
-                    extract_field(field, source, &name, local_id, symbols, relationships, import_map);
+                    extract_field(
+                        field,
+                        source,
+                        &name,
+                        local_id,
+                        symbols,
+                        relationships,
+                        import_map,
+                    );
                 }
             }
         }
@@ -306,7 +344,9 @@ fn extract_field(
     };
 
     let type_node = node.child_by_field_name("type");
-    let type_text = type_node.and_then(|n| n.utf8_text(source).ok()).map(|s| s.to_string());
+    let type_text = type_node
+        .and_then(|n| n.utf8_text(source).ok())
+        .map(|s| s.to_string());
 
     let start = node.start_position();
     let end = node.end_position();
@@ -441,7 +481,14 @@ fn extract_enum_variant(
             let mut field_cursor = child.walk();
             for field in child.children(&mut field_cursor) {
                 if field.kind() == "field_declaration" {
-                    extract_variant_field(field, source, &variant_qn, variant_local_id, symbols, relationships);
+                    extract_variant_field(
+                        field,
+                        source,
+                        &variant_qn,
+                        variant_local_id,
+                        symbols,
+                        relationships,
+                    );
                 }
             }
         }
@@ -464,7 +511,8 @@ fn extract_variant_field(
         None => return,
     };
 
-    let type_text = node.child_by_field_name("type")
+    let type_text = node
+        .child_by_field_name("type")
         .and_then(|n| n.utf8_text(source).ok())
         .map(|s| s.to_string());
 
@@ -539,7 +587,15 @@ fn extract_trait(
         let mut body_cursor = body.walk();
         for member in body.children(&mut body_cursor) {
             if member.kind() == "function_signature_item" || member.kind() == "function_item" {
-                extract_trait_method(member, source, &name, local_id, symbols, relationships, import_map);
+                extract_trait_method(
+                    member,
+                    source,
+                    &name,
+                    local_id,
+                    symbols,
+                    relationships,
+                    import_map,
+                );
             }
         }
     }
@@ -636,7 +692,8 @@ fn extract_impl(
         extract_type_names(trait_n, source, &mut trait_names);
         if let Some(trait_type_name) = trait_names.into_iter().next() {
             let resolved = resolve_type_name(&trait_type_name, import_map);
-            let type_local_id = symbols.iter()
+            let type_local_id = symbols
+                .iter()
                 .find(|s| s.name == type_name && s.parent_local_id.is_none())
                 .map(|s| s.local_id);
             if let Some(id) = type_local_id {
@@ -654,7 +711,14 @@ fn extract_impl(
         let mut body_cursor = body.walk();
         for member in body.children(&mut body_cursor) {
             if member.kind() == "function_item" {
-                extract_impl_method(member, source, &type_name, symbols, relationships, import_map);
+                extract_impl_method(
+                    member,
+                    source,
+                    &type_name,
+                    symbols,
+                    relationships,
+                    import_map,
+                );
             }
         }
     }
@@ -763,7 +827,9 @@ fn extract_type_alias(
     };
 
     let type_node = node.child_by_field_name("type");
-    let type_text = type_node.and_then(|n| n.utf8_text(source).ok()).map(|s| s.to_string());
+    let type_text = type_node
+        .and_then(|n| n.utf8_text(source).ok())
+        .map(|s| s.to_string());
 
     let start = node.start_position();
     let end = node.end_position();
@@ -883,16 +949,16 @@ fn collect_calls(
             let call_name = match func_node.kind() {
                 "field_expression" => {
                     // e.g. self.save() → extract "save"
-                    func_node.child_by_field_name("field")
+                    func_node
+                        .child_by_field_name("field")
                         .and_then(|f| f.utf8_text(source).ok())
                         .map(|s| s.to_string())
                 }
-                "identifier" => {
-                    func_node.utf8_text(source).ok().map(|s| s.to_string())
-                }
+                "identifier" => func_node.utf8_text(source).ok().map(|s| s.to_string()),
                 "scoped_identifier" => {
                     // e.g. Foo::new() → extract "new"
-                    func_node.child_by_field_name("name")
+                    func_node
+                        .child_by_field_name("name")
                         .and_then(|n| n.utf8_text(source).ok())
                         .map(|s| s.to_string())
                 }
@@ -920,7 +986,9 @@ mod tests {
 
     fn parse_and_extract(source: &str) -> ExtractionResult {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_rust::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         let plugin = RustPlugin;
         plugin.extract_symbols(&tree, source.as_bytes(), Path::new("test.rs"))
@@ -970,7 +1038,9 @@ mod tests {
     #[test]
     fn test_trait_supertraits() {
         let result = parse_and_extract("pub trait ReadWrite: Read + Write {}");
-        let extends: Vec<_> = result.relationships.iter()
+        let extends: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Extends)
             .collect();
         assert_eq!(extends.len(), 2);
@@ -989,7 +1059,9 @@ mod tests {
     #[test]
     fn test_trait_impl() {
         let result = parse_and_extract("struct Foo {}\ntrait Bar {}\nimpl Bar for Foo {}");
-        let impls: Vec<_> = result.relationships.iter()
+        let impls: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Implements)
             .collect();
         assert_eq!(impls.len(), 1);
@@ -1016,7 +1088,9 @@ mod tests {
     #[test]
     fn test_field_type_relationship() {
         let result = parse_and_extract("struct Service {\n    repo: Repository,\n}");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -1026,7 +1100,9 @@ mod tests {
     #[test]
     fn test_param_type_relationship() {
         let result = parse_and_extract("fn process(r: Repository) {}");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -1036,7 +1112,9 @@ mod tests {
     #[test]
     fn test_return_type_relationship() {
         let result = parse_and_extract("fn new_service() -> Service { todo!() }");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -1046,7 +1124,9 @@ mod tests {
     #[test]
     fn test_call_relationship() {
         let result = parse_and_extract("fn main() {\n    process();\n}");
-        let calls: Vec<_> = result.relationships.iter()
+        let calls: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Calls)
             .collect();
         assert_eq!(calls.len(), 1);
@@ -1055,18 +1135,28 @@ mod tests {
 
     #[test]
     fn test_use_import_resolution() {
-        let result = parse_and_extract("use crate::model::Repository;\nstruct Service {\n    repo: Repository,\n}");
-        let field_types: Vec<_> = result.relationships.iter()
+        let result = parse_and_extract(
+            "use crate::model::Repository;\nstruct Service {\n    repo: Repository,\n}",
+        );
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
-        assert_eq!(field_types[0].target_qualified_name, "crate::model::Repository");
+        assert_eq!(
+            field_types[0].target_qualified_name,
+            "crate::model::Repository"
+        );
     }
 
     #[test]
     fn test_use_alias() {
-        let result = parse_and_extract("use std::io::Result as IoResult;\nfn foo() -> IoResult { todo!() }");
-        let field_types: Vec<_> = result.relationships.iter()
+        let result =
+            parse_and_extract("use std::io::Result as IoResult;\nfn foo() -> IoResult { todo!() }");
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -1082,7 +1172,9 @@ mod tests {
     #[test]
     fn test_reference_type_stripped() {
         let result = parse_and_extract("fn process(r: &Repository) {}");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);

@@ -1,8 +1,8 @@
-use std::collections::BTreeMap;
-use anyhow::Result;
-use rusqlite::{Connection, params};
 use crate::model::*;
-use crate::store::{Store, LanguageStats};
+use crate::store::{LanguageStats, Store};
+use anyhow::Result;
+use rusqlite::{params, Connection};
+use std::collections::BTreeMap;
 
 fn glob_to_like(pattern: &str) -> String {
     let mut like = String::with_capacity(pattern.len());
@@ -93,7 +93,13 @@ impl SqliteStore {
 }
 
 impl Store for SqliteStore {
-    fn upsert_file(&self, path: &str, mtime: i64, hash: Option<&str>, language: &str) -> Result<FileId> {
+    fn upsert_file(
+        &self,
+        path: &str,
+        mtime: i64,
+        hash: Option<&str>,
+        language: &str,
+    ) -> Result<FileId> {
         self.conn.execute(
             "INSERT INTO files (path, mtime, hash, language) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT(path) DO UPDATE SET mtime=excluded.mtime, hash=excluded.hash, language=excluded.language",
@@ -111,13 +117,15 @@ impl Store for SqliteStore {
         let result = self.conn.query_row(
             "SELECT id, path, mtime, hash, language FROM files WHERE path = ?1",
             params![path],
-            |row| Ok(FileRecord {
-                id: row.get(0)?,
-                path: row.get(1)?,
-                mtime: row.get(2)?,
-                hash: row.get(3)?,
-                language: row.get(4)?,
-            }),
+            |row| {
+                Ok(FileRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    mtime: row.get(2)?,
+                    hash: row.get(3)?,
+                    language: row.get(4)?,
+                })
+            },
         );
         match result {
             Ok(record) => Ok(Some(record)),
@@ -127,28 +135,37 @@ impl Store for SqliteStore {
     }
 
     fn list_files(&self) -> Result<Vec<FileRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, path, mtime, hash, language FROM files"
-        )?;
-        let files = stmt.query_map([], |row| Ok(FileRecord {
-            id: row.get(0)?,
-            path: row.get(1)?,
-            mtime: row.get(2)?,
-            hash: row.get(3)?,
-            language: row.get(4)?,
-        }))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, path, mtime, hash, language FROM files")?;
+        let files = stmt
+            .query_map([], |row| {
+                Ok(FileRecord {
+                    id: row.get(0)?,
+                    path: row.get(1)?,
+                    mtime: row.get(2)?,
+                    hash: row.get(3)?,
+                    language: row.get(4)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(files)
     }
 
     fn delete_file(&self, file_id: FileId) -> Result<()> {
-        self.conn.execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
+        self.conn
+            .execute("DELETE FROM files WHERE id = ?1", params![file_id])?;
         Ok(())
     }
 
-    fn insert_symbols(&self, file_id: FileId, symbols: &[ExtractedSymbol]) -> Result<Vec<SymbolId>> {
+    fn insert_symbols(
+        &self,
+        file_id: FileId,
+        symbols: &[ExtractedSymbol],
+    ) -> Result<Vec<SymbolId>> {
         // First pass: insert all symbols with parent_symbol_id = NULL, collect local_id -> SymbolId map
-        let mut local_to_real: std::collections::HashMap<usize, SymbolId> = std::collections::HashMap::new();
+        let mut local_to_real: std::collections::HashMap<usize, SymbolId> =
+            std::collections::HashMap::new();
         let mut ids: Vec<SymbolId> = Vec::with_capacity(symbols.len());
         for sym in symbols {
             self.conn.execute(
@@ -181,12 +198,19 @@ impl Store for SqliteStore {
     }
 
     fn delete_symbols_for_file(&self, file_id: FileId) -> Result<()> {
-        self.conn.execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
+        self.conn
+            .execute("DELETE FROM symbols WHERE file_id = ?1", params![file_id])?;
         Ok(())
     }
 
-    fn insert_relationships(&self, file_id: FileId, symbol_id_map: &[(usize, SymbolId)], relationships: &[ExtractedRelationship]) -> Result<()> {
-        let map: std::collections::HashMap<usize, SymbolId> = symbol_id_map.iter().copied().collect();
+    fn insert_relationships(
+        &self,
+        file_id: FileId,
+        symbol_id_map: &[(usize, SymbolId)],
+        relationships: &[ExtractedRelationship],
+    ) -> Result<()> {
+        let map: std::collections::HashMap<usize, SymbolId> =
+            symbol_id_map.iter().copied().collect();
         for rel in relationships {
             if let Some(&source_symbol_id) = map.get(&rel.source_local_id) {
                 self.conn.execute(
@@ -200,7 +224,10 @@ impl Store for SqliteStore {
     }
 
     fn delete_relationships_for_file(&self, file_id: FileId) -> Result<()> {
-        self.conn.execute("DELETE FROM relationships WHERE file_id = ?1", params![file_id])?;
+        self.conn.execute(
+            "DELETE FROM relationships WHERE file_id = ?1",
+            params![file_id],
+        )?;
         Ok(())
     }
 
@@ -222,9 +249,11 @@ impl Store for SqliteStore {
         let mut stmt = self.conn.prepare(
             "SELECT source_symbol_id, target_qualified_name, kind FROM relationships WHERE file_id = ?1 AND target_symbol_id IS NULL"
         )?;
-        let rows: Vec<(i64, String, String)> = stmt.query_map(params![file_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let rows: Vec<(i64, String, String)> = stmt
+            .query_map(params![file_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut resolved_count = 0u64;
         for (source_id, target_name, kind) in &rows {
@@ -260,7 +289,11 @@ impl Store for SqliteStore {
 
     fn find_symbol(&self, query: &SymbolQuery) -> Result<Vec<Symbol>> {
         let like_pattern = glob_to_like(&query.pattern);
-        let collate = if query.case_insensitive { " COLLATE NOCASE" } else { "" };
+        let collate = if query.case_insensitive {
+            " COLLATE NOCASE"
+        } else {
+            ""
+        };
 
         let base = format!(
             "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
@@ -289,19 +322,26 @@ impl Store for SqliteStore {
         };
 
         // Apply precise glob matching to filter out SQL LIKE over-matches
-        let pat_lower = if case_insensitive { Some(pattern.to_lowercase()) } else { None };
-        let results = rows.into_iter().filter(|sym| {
-            let sig = sym.signature.as_deref().unwrap_or("");
-            if let Some(ref pat) = pat_lower {
-                glob_match::glob_match(pat, &sym.name.to_lowercase())
-                    || glob_match::glob_match(pat, &sym.qualified_name.to_lowercase())
-                    || glob_match::glob_match(pat, &sig.to_lowercase())
-            } else {
-                glob_match::glob_match(&pattern, &sym.name)
-                    || glob_match::glob_match(&pattern, &sym.qualified_name)
-                    || glob_match::glob_match(&pattern, sig)
-            }
-        }).collect();
+        let pat_lower = if case_insensitive {
+            Some(pattern.to_lowercase())
+        } else {
+            None
+        };
+        let results = rows
+            .into_iter()
+            .filter(|sym| {
+                let sig = sym.signature.as_deref().unwrap_or("");
+                if let Some(ref pat) = pat_lower {
+                    glob_match::glob_match(pat, &sym.name.to_lowercase())
+                        || glob_match::glob_match(pat, &sym.qualified_name.to_lowercase())
+                        || glob_match::glob_match(pat, &sig.to_lowercase())
+                } else {
+                    glob_match::glob_match(&pattern, &sym.name)
+                        || glob_match::glob_match(&pattern, &sym.qualified_name)
+                        || glob_match::glob_match(&pattern, sig)
+                }
+            })
+            .collect();
 
         Ok(results)
     }
@@ -315,7 +355,8 @@ impl Store for SqliteStore {
              JOIN files f ON s.file_id = f.id \
              WHERE r.target_symbol_id = ?"
         )?;
-        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
@@ -331,7 +372,8 @@ impl Store for SqliteStore {
             RelationshipKind::Extends.as_str(),
             RelationshipKind::Implements.as_str()
         ))?;
-        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
@@ -345,7 +387,8 @@ impl Store for SqliteStore {
              JOIN files f ON s.file_id = f.id \
              WHERE r.source_symbol_id = ? AND r.kind IN ('extends', 'implements')"
         )?;
-        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
@@ -366,7 +409,8 @@ impl Store for SqliteStore {
                       WHERE target.id = ?1 \
                   ))"
         )?;
-        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
@@ -389,7 +433,8 @@ impl Store for SqliteStore {
              JOIN files f2 ON s.file_id = f2.id \
              WHERE r2.source_symbol_id = ?1 AND r2.kind = 'calls' AND r2.target_symbol_id IS NOT NULL"
         )?;
-        let symbols = stmt.query_map(params![symbol_id], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![symbol_id], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
@@ -401,14 +446,19 @@ impl Store for SqliteStore {
              FROM symbols s JOIN files f ON s.file_id = f.id \
              WHERE f.path = ?"
         )?;
-        let symbols = stmt.query_map(params![file_path], Self::symbol_from_row)?
+        let symbols = stmt
+            .query_map(params![file_path], Self::symbol_from_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(symbols)
     }
 
     fn symbols_in_package(&self, package: &str, query: &SymbolQuery) -> Result<Vec<Symbol>> {
         let like_pattern = glob_to_like(&query.pattern);
-        let collate = if query.case_insensitive { " COLLATE NOCASE" } else { "" };
+        let collate = if query.case_insensitive {
+            " COLLATE NOCASE"
+        } else {
+            ""
+        };
 
         let mut sql = format!(
             "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
@@ -425,26 +475,38 @@ impl Store for SqliteStore {
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows: Vec<Symbol> = if let Some(ref kind) = query.kind {
-            stmt.query_map(params![package, like_pattern, kind.as_str()], Self::symbol_from_row)?
-                .collect::<rusqlite::Result<Vec<_>>>()?
+            stmt.query_map(
+                params![package, like_pattern, kind.as_str()],
+                Self::symbol_from_row,
+            )?
+            .collect::<rusqlite::Result<Vec<_>>>()?
         } else {
             stmt.query_map(params![package, like_pattern], Self::symbol_from_row)?
                 .collect::<rusqlite::Result<Vec<_>>>()?
         };
 
         // Apply precise glob matching on name
-        let results = rows.into_iter().filter(|sym| {
-            if case_insensitive {
-                glob_match::glob_match(&pattern.to_lowercase(), &sym.name.to_lowercase())
-            } else {
-                glob_match::glob_match(&pattern, &sym.name)
-            }
-        }).collect();
+        let results = rows
+            .into_iter()
+            .filter(|sym| {
+                if case_insensitive {
+                    glob_match::glob_match(&pattern.to_lowercase(), &sym.name.to_lowercase())
+                } else {
+                    glob_match::glob_match(&pattern, &sym.name)
+                }
+            })
+            .collect();
 
         Ok(results)
     }
 
-    fn update_symbol_name(&self, symbol_id: SymbolId, new_name: &str, new_qualified_name: &str, new_signature: Option<&str>) -> Result<()> {
+    fn update_symbol_name(
+        &self,
+        symbol_id: SymbolId,
+        new_name: &str,
+        new_qualified_name: &str,
+        new_signature: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE symbols SET name = ?1, qualified_name = ?2, signature = ?3 WHERE id = ?4",
             params![new_name, new_qualified_name, new_signature, symbol_id],
@@ -452,19 +514,33 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn update_child_qualified_names(&self, parent_symbol_id: SymbolId, old_prefix: &str, new_prefix: &str) -> Result<()> {
+    fn update_child_qualified_names(
+        &self,
+        parent_symbol_id: SymbolId,
+        old_prefix: &str,
+        new_prefix: &str,
+    ) -> Result<()> {
         // Note: this updates direct children only. Deeply nested inner classes
         // (e.g. com.foo.Foo.Inner.method) would need recursive cascading.
         // Acceptable for v1 since inner class renames are not a primary use case.
         self.conn.execute(
             "UPDATE symbols SET qualified_name = ?1 || substr(qualified_name, ?2) \
              WHERE parent_symbol_id = ?3 AND qualified_name LIKE ?4 || '%'",
-            params![new_prefix, old_prefix.len() as i64 + 1, parent_symbol_id, old_prefix],
+            params![
+                new_prefix,
+                old_prefix.len() as i64 + 1,
+                parent_symbol_id,
+                old_prefix
+            ],
         )?;
         Ok(())
     }
 
-    fn update_relationship_targets(&self, old_qualified_name: &str, new_qualified_name: &str) -> Result<()> {
+    fn update_relationship_targets(
+        &self,
+        old_qualified_name: &str,
+        new_qualified_name: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE relationships SET target_qualified_name = ?1 WHERE target_qualified_name = ?2",
             params![new_qualified_name, old_qualified_name],
@@ -484,7 +560,9 @@ impl Store for SqliteStore {
         let mut stats: BTreeMap<String, LanguageStats> = BTreeMap::new();
 
         // File counts per language
-        let mut stmt = self.conn.prepare("SELECT language, COUNT(*) FROM files GROUP BY language")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT language, COUNT(*) FROM files GROUP BY language")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
         })?;
@@ -496,10 +574,14 @@ impl Store for SqliteStore {
         // Symbol counts per language and kind
         let mut stmt = self.conn.prepare(
             "SELECT f.language, s.kind, COUNT(*) FROM symbols s \
-             JOIN files f ON s.file_id = f.id GROUP BY f.language, s.kind"
+             JOIN files f ON s.file_id = f.id GROUP BY f.language, s.kind",
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
         })?;
         for row in rows {
             let (lang, kind, count) = row?;
@@ -509,21 +591,29 @@ impl Store for SqliteStore {
         // Relationship counts per language and kind
         let mut stmt = self.conn.prepare(
             "SELECT f.language, r.kind, COUNT(*) FROM relationships r \
-             JOIN files f ON r.file_id = f.id GROUP BY f.language, r.kind"
+             JOIN files f ON r.file_id = f.id GROUP BY f.language, r.kind",
         )?;
         let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, u64>(2)?,
+            ))
         })?;
         for row in rows {
             let (lang, kind, count) = row?;
-            stats.entry(lang).or_default().relationships.insert(kind, count);
+            stats
+                .entry(lang)
+                .or_default()
+                .relationships
+                .insert(kind, count);
         }
 
         // Unresolved relationships per language
         let mut stmt = self.conn.prepare(
             "SELECT f.language, COUNT(*) FROM relationships r \
              JOIN files f ON r.file_id = f.id \
-             WHERE r.target_symbol_id IS NULL GROUP BY f.language"
+             WHERE r.target_symbol_id IS NULL GROUP BY f.language",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?))
@@ -547,7 +637,8 @@ impl Store for SqliteStore {
     }
 
     fn clear_all(&self) -> Result<()> {
-        self.conn.execute_batch("DELETE FROM relationships; DELETE FROM symbols; DELETE FROM files;")?;
+        self.conn
+            .execute_batch("DELETE FROM relationships; DELETE FROM symbols; DELETE FROM files;")?;
         Ok(())
     }
 }
@@ -571,7 +662,10 @@ mod tests {
             qualified_name: "com.foo.Foo".into(),
             kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
             parent_local_id: None,
             package: "com.foo".into(),
             type_text: None,
@@ -591,18 +685,34 @@ mod tests {
         let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let syms = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Foo".into(), signature: None,
-                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "Foo".into(),
+                signature: None,
+                qualified_name: "com.foo.Foo".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 10, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "bar".into(), signature: Some("bar(String)".into()),
-                qualified_name: "com.foo.Foo.bar(String)".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "bar".into(),
+                signature: Some("bar(String)".into()),
+                qualified_name: "com.foo.Foo.bar(String)".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 5, end_column: 5,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 5,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids = store.insert_symbols(fid, &syms).unwrap();
@@ -614,11 +724,19 @@ mod tests {
         let store = test_store();
         let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let syms = vec![ExtractedSymbol {
-            local_id: 0, name: "Foo".into(), signature: None,
-            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "Foo".into(),
+            signature: None,
+            qualified_name: "com.foo.Foo".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         let ids = store.insert_symbols(fid, &syms).unwrap();
         let map: Vec<(usize, SymbolId)> = vec![(0, ids[0])];
@@ -648,19 +766,35 @@ mod tests {
         let f1 = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let f2 = store.upsert_file("Bar.java", 1, None, "java").unwrap();
         let syms1 = vec![ExtractedSymbol {
-            local_id: 0, name: "Foo".into(), signature: None,
-            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "Foo".into(),
+            signature: None,
+            qualified_name: "com.foo.Foo".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         let ids1 = store.insert_symbols(f1, &syms1).unwrap();
         let syms2 = vec![ExtractedSymbol {
-            local_id: 0, name: "Bar".into(), signature: None,
-            qualified_name: "com.foo.Bar".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "Bar".into(),
+            signature: None,
+            qualified_name: "com.foo.Bar".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         store.insert_symbols(f2, &syms2).unwrap();
         let map: Vec<(usize, SymbolId)> = vec![(0, ids1[0])];
@@ -678,23 +812,43 @@ mod tests {
     fn test_resolve_wildcard_imports() {
         let store = test_store();
 
-        let f1 = store.upsert_file("Repository.java", 1, None, "java").unwrap();
+        let f1 = store
+            .upsert_file("Repository.java", 1, None, "java")
+            .unwrap();
         let syms1 = vec![ExtractedSymbol {
-            local_id: 0, name: "Repository".into(), signature: None,
-            qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
+            local_id: 0,
+            name: "Repository".into(),
+            signature: None,
+            qualified_name: "com.foo.Repository".into(),
+            kind: SymbolKind::new("interface"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         store.insert_symbols(f1, &syms1).unwrap();
 
-        let f2 = store.upsert_file("UserService.java", 1, None, "java").unwrap();
+        let f2 = store
+            .upsert_file("UserService.java", 1, None, "java")
+            .unwrap();
         let syms2 = vec![ExtractedSymbol {
-            local_id: 0, name: "UserService".into(), signature: None,
-            qualified_name: "com.bar.UserService".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "UserService".into(),
+            signature: None,
+            qualified_name: "com.bar.UserService".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.bar".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.bar".into(),
+            type_text: None,
         }];
         let ids2 = store.insert_symbols(f2, &syms2).unwrap();
         let map2: Vec<(usize, SymbolId)> = vec![(0, ids2[0])];
@@ -705,7 +859,9 @@ mod tests {
         }];
         store.insert_relationships(f2, &map2, &rels).unwrap();
 
-        let resolved = store.resolve_wildcard_imports(f2, &["com.foo".to_string()]).unwrap();
+        let resolved = store
+            .resolve_wildcard_imports(f2, &["com.foo".to_string()])
+            .unwrap();
         assert_eq!(resolved, 1);
 
         let count = store.resolve_relationships().unwrap();
@@ -715,7 +871,9 @@ mod tests {
     #[test]
     fn test_upsert_and_get_file() {
         let store = test_store();
-        let id = store.upsert_file("src/Foo.java", 1000, None, "java").unwrap();
+        let id = store
+            .upsert_file("src/Foo.java", 1000, None, "java")
+            .unwrap();
         let file = store.get_file("src/Foo.java").unwrap().unwrap();
         assert_eq!(file.id, id);
         assert_eq!(file.path, "src/Foo.java");
@@ -726,8 +884,12 @@ mod tests {
     #[test]
     fn test_upsert_file_updates_mtime() {
         let store = test_store();
-        let id1 = store.upsert_file("src/Foo.java", 1000, None, "java").unwrap();
-        let id2 = store.upsert_file("src/Foo.java", 2000, None, "java").unwrap();
+        let id1 = store
+            .upsert_file("src/Foo.java", 1000, None, "java")
+            .unwrap();
+        let id2 = store
+            .upsert_file("src/Foo.java", 2000, None, "java")
+            .unwrap();
         assert_eq!(id1, id2);
         let file = store.get_file("src/Foo.java").unwrap().unwrap();
         assert_eq!(file.mtime, 2000);
@@ -755,21 +917,39 @@ mod tests {
         let store = test_store();
 
         // File 1: UserService.java
-        let f1 = store.upsert_file("UserService.java", 1, None, "java").unwrap();
+        let f1 = store
+            .upsert_file("UserService.java", 1, None, "java")
+            .unwrap();
         let syms1 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "UserService".into(), signature: None,
-                qualified_name: "com.foo.UserService".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "UserService".into(),
+                signature: None,
+                qualified_name: "com.foo.UserService".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 20, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 20,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "save".into(), signature: Some("save(Person)".into()),
-                qualified_name: "com.foo.UserService.save(Person)".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "save".into(),
+                signature: Some("save(Person)".into()),
+                qualified_name: "com.foo.UserService.save(Person)".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 5, column: 4, end_line: 10, end_column: 5,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 5,
+                column: 4,
+                end_line: 10,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids1 = store.insert_symbols(f1, &syms1).unwrap();
@@ -777,21 +957,39 @@ mod tests {
         let save_person_id = ids1[1];
 
         // File 2: PersonRepo.java
-        let f2 = store.upsert_file("PersonRepo.java", 1, None, "java").unwrap();
+        let f2 = store
+            .upsert_file("PersonRepo.java", 1, None, "java")
+            .unwrap();
         let syms2 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "PersonRepo".into(), signature: None,
-                qualified_name: "com.foo.PersonRepo".into(), kind: SymbolKind::new("interface"),
+                local_id: 0,
+                name: "PersonRepo".into(),
+                signature: None,
+                qualified_name: "com.foo.PersonRepo".into(),
+                kind: SymbolKind::new("interface"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 15, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 15,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "findAll".into(), signature: Some("findAll()".into()),
-                qualified_name: "com.foo.PersonRepo.findAll()".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "findAll".into(),
+                signature: Some("findAll()".into()),
+                qualified_name: "com.foo.PersonRepo.findAll()".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 3, end_column: 30,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 3,
+                end_column: 30,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids2 = store.insert_symbols(f2, &syms2).unwrap();
@@ -817,13 +1015,23 @@ mod tests {
 
         store.resolve_relationships().unwrap();
 
-        (store, user_service_id, save_person_id, person_repo_id, find_all_id)
+        (
+            store,
+            user_service_id,
+            save_person_id,
+            person_repo_id,
+            find_all_id,
+        )
     }
 
     #[test]
     fn test_find_symbol_exact() {
         let (store, _, _, _, _) = seed_store();
-        let q = SymbolQuery { pattern: "UserService".into(), case_insensitive: false, kind: None };
+        let q = SymbolQuery {
+            pattern: "UserService".into(),
+            case_insensitive: false,
+            kind: None,
+        };
         let results = store.find_symbol(&q).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "UserService");
@@ -832,7 +1040,11 @@ mod tests {
     #[test]
     fn test_find_symbol_glob() {
         let (store, _, _, _, _) = seed_store();
-        let q = SymbolQuery { pattern: "*Service".into(), case_insensitive: false, kind: None };
+        let q = SymbolQuery {
+            pattern: "*Service".into(),
+            case_insensitive: false,
+            kind: None,
+        };
         let results = store.find_symbol(&q).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "UserService");
@@ -841,7 +1053,11 @@ mod tests {
     #[test]
     fn test_find_symbol_by_kind() {
         let (store, _, _, _, _) = seed_store();
-        let q = SymbolQuery { pattern: "*".into(), case_insensitive: false, kind: Some(SymbolKind::new("interface")) };
+        let q = SymbolQuery {
+            pattern: "*".into(),
+            case_insensitive: false,
+            kind: Some(SymbolKind::new("interface")),
+        };
         let results = store.find_symbol(&q).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "PersonRepo");
@@ -897,7 +1113,11 @@ mod tests {
     #[test]
     fn test_symbols_in_package() {
         let (store, _, _, _, _) = seed_store();
-        let q = SymbolQuery { pattern: "*".into(), case_insensitive: false, kind: None };
+        let q = SymbolQuery {
+            pattern: "*".into(),
+            case_insensitive: false,
+            kind: None,
+        };
         let results = store.symbols_in_package("com.foo", &q).unwrap();
         assert_eq!(results.len(), 4);
     }
@@ -905,21 +1125,39 @@ mod tests {
     #[test]
     fn test_find_callers_via_method_key() {
         let store = test_store();
-        let f1 = store.upsert_file("Repository.java", 1, None, "java").unwrap();
+        let f1 = store
+            .upsert_file("Repository.java", 1, None, "java")
+            .unwrap();
         let syms1 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Repository".into(), signature: None,
-                qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
+                local_id: 0,
+                name: "Repository".into(),
+                signature: None,
+                qualified_name: "com.foo.Repository".into(),
+                kind: SymbolKind::new("interface"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 5, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 5,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "save".into(), signature: Some("save(Object)".into()),
-                qualified_name: "com.foo.Repository.save(Object)".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "save".into(),
+                signature: Some("save(Object)".into()),
+                qualified_name: "com.foo.Repository.save(Object)".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 3, end_column: 30,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 3,
+                end_column: 30,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids1 = store.insert_symbols(f1, &syms1).unwrap();
@@ -928,18 +1166,34 @@ mod tests {
         let f2 = store.upsert_file("Service.java", 1, None, "java").unwrap();
         let syms2 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Service".into(), signature: None,
-                qualified_name: "com.bar.Service".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "Service".into(),
+                signature: None,
+                qualified_name: "com.bar.Service".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 10, end_column: 1,
-                parent_local_id: None, package: "com.bar".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.bar".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "doWork".into(), signature: Some("doWork()".into()),
-                qualified_name: "com.bar.Service.doWork()".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "doWork".into(),
+                signature: Some("doWork()".into()),
+                qualified_name: "com.bar.Service.doWork()".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 5, column: 4, end_line: 8, end_column: 5,
-                parent_local_id: Some(0), package: "com.bar".into(), type_text: None,
+                line: 5,
+                column: 4,
+                end_line: 8,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.bar".into(),
+                type_text: None,
             },
         ];
         let ids2 = store.insert_symbols(f2, &syms2).unwrap();
@@ -961,21 +1215,39 @@ mod tests {
     #[test]
     fn test_find_callees_via_method_key() {
         let store = test_store();
-        let f1 = store.upsert_file("Repository.java", 1, None, "java").unwrap();
+        let f1 = store
+            .upsert_file("Repository.java", 1, None, "java")
+            .unwrap();
         let syms1 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Repository".into(), signature: None,
-                qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
+                local_id: 0,
+                name: "Repository".into(),
+                signature: None,
+                qualified_name: "com.foo.Repository".into(),
+                kind: SymbolKind::new("interface"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 5, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 5,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "save".into(), signature: Some("save(Object)".into()),
-                qualified_name: "com.foo.Repository.save(Object)".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "save".into(),
+                signature: Some("save(Object)".into()),
+                qualified_name: "com.foo.Repository.save(Object)".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 3, end_column: 30,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 3,
+                end_column: 30,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         store.insert_symbols(f1, &syms1).unwrap();
@@ -983,18 +1255,34 @@ mod tests {
         let f2 = store.upsert_file("Service.java", 1, None, "java").unwrap();
         let syms2 = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Service".into(), signature: None,
-                qualified_name: "com.bar.Service".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "Service".into(),
+                signature: None,
+                qualified_name: "com.bar.Service".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 10, end_column: 1,
-                parent_local_id: None, package: "com.bar".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.bar".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "doWork".into(), signature: Some("doWork()".into()),
-                qualified_name: "com.bar.Service.doWork()".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "doWork".into(),
+                signature: Some("doWork()".into()),
+                qualified_name: "com.bar.Service.doWork()".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 5, column: 4, end_line: 8, end_column: 5,
-                parent_local_id: Some(0), package: "com.bar".into(), type_text: None,
+                line: 5,
+                column: 4,
+                end_line: 8,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.bar".into(),
+                type_text: None,
             },
         ];
         let ids2 = store.insert_symbols(f2, &syms2).unwrap();
@@ -1020,25 +1308,52 @@ mod tests {
         let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let syms = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Foo".into(), signature: None,
-                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "Foo".into(),
+                signature: None,
+                qualified_name: "com.foo.Foo".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 10, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "save".into(), signature: Some("save(Person)".into()),
-                qualified_name: "com.foo.Foo.save(Person)".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "save".into(),
+                signature: Some("save(Person)".into()),
+                qualified_name: "com.foo.Foo.save(Person)".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 5, end_column: 5,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 5,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids = store.insert_symbols(fid, &syms).unwrap();
 
-        store.update_symbol_name(ids[1], "findById", "com.foo.Foo.findById(Person)", Some("findById(Person)")).unwrap();
+        store
+            .update_symbol_name(
+                ids[1],
+                "findById",
+                "com.foo.Foo.findById(Person)",
+                Some("findById(Person)"),
+            )
+            .unwrap();
 
-        let q = SymbolQuery { pattern: "findById".into(), case_insensitive: false, kind: None };
+        let q = SymbolQuery {
+            pattern: "findById".into(),
+            case_insensitive: false,
+            kind: None,
+        };
         let results = store.find_symbol(&q).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "findById");
@@ -1052,25 +1367,47 @@ mod tests {
         let fid = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let syms = vec![
             ExtractedSymbol {
-                local_id: 0, name: "Foo".into(), signature: None,
-                qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+                local_id: 0,
+                name: "Foo".into(),
+                signature: None,
+                qualified_name: "com.foo.Foo".into(),
+                kind: SymbolKind::new("class"),
                 visibility: Visibility::new("public"),
-                line: 1, column: 0, end_line: 10, end_column: 1,
-                parent_local_id: None, package: "com.foo".into(), type_text: None,
+                line: 1,
+                column: 0,
+                end_line: 10,
+                end_column: 1,
+                parent_local_id: None,
+                package: "com.foo".into(),
+                type_text: None,
             },
             ExtractedSymbol {
-                local_id: 1, name: "save".into(), signature: Some("save()".into()),
-                qualified_name: "com.foo.Foo.save()".into(), kind: SymbolKind::new("method"),
+                local_id: 1,
+                name: "save".into(),
+                signature: Some("save()".into()),
+                qualified_name: "com.foo.Foo.save()".into(),
+                kind: SymbolKind::new("method"),
                 visibility: Visibility::new("public"),
-                line: 3, column: 4, end_line: 5, end_column: 5,
-                parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
+                line: 3,
+                column: 4,
+                end_line: 5,
+                end_column: 5,
+                parent_local_id: Some(0),
+                package: "com.foo".into(),
+                type_text: None,
             },
         ];
         let ids = store.insert_symbols(fid, &syms).unwrap();
 
-        store.update_child_qualified_names(ids[0], "com.foo.Foo", "com.foo.Bar").unwrap();
+        store
+            .update_child_qualified_names(ids[0], "com.foo.Foo", "com.foo.Bar")
+            .unwrap();
 
-        let q = SymbolQuery { pattern: "save".into(), case_insensitive: false, kind: None };
+        let q = SymbolQuery {
+            pattern: "save".into(),
+            case_insensitive: false,
+            kind: None,
+        };
         let results = store.find_symbol(&q).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].qualified_name, "com.foo.Bar.save()");
@@ -1082,19 +1419,35 @@ mod tests {
         let f1 = store.upsert_file("Foo.java", 1, None, "java").unwrap();
         let f2 = store.upsert_file("Bar.java", 1, None, "java").unwrap();
         let syms1 = vec![ExtractedSymbol {
-            local_id: 0, name: "Foo".into(), signature: None,
-            qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "Foo".into(),
+            signature: None,
+            qualified_name: "com.foo.Foo".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         let ids1 = store.insert_symbols(f1, &syms1).unwrap();
         let syms2 = vec![ExtractedSymbol {
-            local_id: 0, name: "Bar".into(), signature: None,
-            qualified_name: "com.foo.Bar".into(), kind: SymbolKind::new("class"),
+            local_id: 0,
+            name: "Bar".into(),
+            signature: None,
+            qualified_name: "com.foo.Bar".into(),
+            kind: SymbolKind::new("class"),
             visibility: Visibility::new("public"),
-            line: 1, column: 0, end_line: 10, end_column: 1,
-            parent_local_id: None, package: "com.foo".into(), type_text: None,
+            line: 1,
+            column: 0,
+            end_line: 10,
+            end_column: 1,
+            parent_local_id: None,
+            package: "com.foo".into(),
+            type_text: None,
         }];
         let ids2 = store.insert_symbols(f2, &syms2).unwrap();
         let map: Vec<(usize, SymbolId)> = vec![(0, ids2[0])];
@@ -1106,7 +1459,9 @@ mod tests {
         store.insert_relationships(f2, &map, &rels).unwrap();
         store.resolve_relationships().unwrap();
 
-        store.update_relationship_targets("com.foo.Foo", "com.foo.Baz").unwrap();
+        store
+            .update_relationship_targets("com.foo.Foo", "com.foo.Baz")
+            .unwrap();
 
         let refs = store.find_references(ids1[0]).unwrap();
         assert_eq!(refs.len(), 1); // still linked by target_symbol_id

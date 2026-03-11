@@ -1,6 +1,6 @@
-use std::path::Path;
-use crate::model::*;
 use super::LanguagePlugin;
+use crate::model::*;
+use std::path::Path;
 
 pub struct GoPlugin;
 
@@ -36,7 +36,13 @@ impl LanguagePlugin for GoPlugin {
         for child in root.children(&mut cursor) {
             match child.kind() {
                 "type_declaration" => {
-                    extract_type_declaration(child, source, &package, &mut symbols, &mut relationships);
+                    extract_type_declaration(
+                        child,
+                        source,
+                        &package,
+                        &mut symbols,
+                        &mut relationships,
+                    );
                 }
                 "function_declaration" => {
                     extract_function(child, source, &package, &mut symbols, &mut relationships);
@@ -148,8 +154,24 @@ fn extract_type_spec(
     });
 
     match kind {
-        "struct" => extract_struct_members(type_node, source, &qualified_name, package, local_id, symbols, relationships),
-        "interface" => extract_interface_members(type_node, source, &qualified_name, package, local_id, symbols, relationships),
+        "struct" => extract_struct_members(
+            type_node,
+            source,
+            &qualified_name,
+            package,
+            local_id,
+            symbols,
+            relationships,
+        ),
+        "interface" => extract_interface_members(
+            type_node,
+            source,
+            &qualified_name,
+            package,
+            local_id,
+            symbols,
+            relationships,
+        ),
         _ => {}
     }
 }
@@ -169,7 +191,15 @@ fn extract_struct_members(
             let mut field_cursor = child.walk();
             for field in child.children(&mut field_cursor) {
                 if field.kind() == "field_declaration" {
-                    extract_struct_field(field, source, parent_qualified_name, package, parent_local_id, symbols, relationships);
+                    extract_struct_field(
+                        field,
+                        source,
+                        parent_qualified_name,
+                        package,
+                        parent_local_id,
+                        symbols,
+                        relationships,
+                    );
                 }
             }
         }
@@ -214,7 +244,9 @@ fn extract_struct_field(
     let local_id = symbols.len();
     let qualified_name = format!("{}.{}", parent_qualified_name, name);
 
-    let type_text = type_node.and_then(|n| n.utf8_text(source).ok()).map(|s| s.to_string());
+    let type_text = type_node
+        .and_then(|n| n.utf8_text(source).ok())
+        .map(|s| s.to_string());
 
     symbols.push(ExtractedSymbol {
         local_id,
@@ -396,7 +428,11 @@ fn extract_method(
     let local_id = symbols.len();
 
     let qualified_name = if receiver_type.is_empty() {
-        if package.is_empty() { name.clone() } else { format!("{}.{}", package, name) }
+        if package.is_empty() {
+            name.clone()
+        } else {
+            format!("{}.{}", package, name)
+        }
     } else if package.is_empty() {
         format!("{}.{}", receiver_type, name)
     } else {
@@ -436,7 +472,9 @@ fn extract_param_type_relationships(
     };
     let mut cursor = params.walk();
     for child in params.children(&mut cursor) {
-        if child.kind() == "parameter_declaration" || child.kind() == "variadic_parameter_declaration" {
+        if child.kind() == "parameter_declaration"
+            || child.kind() == "variadic_parameter_declaration"
+        {
             if let Some(type_node) = child.child_by_field_name("type") {
                 if let Ok(text) = type_node.utf8_text(source) {
                     let type_name = extract_base_type(text);
@@ -522,13 +560,12 @@ fn collect_calls(
             let call_name = match func_node.kind() {
                 "selector_expression" => {
                     // e.g. r.Save() — extract "Save"
-                    func_node.child_by_field_name("field")
+                    func_node
+                        .child_by_field_name("field")
                         .and_then(|f| f.utf8_text(source).ok())
                         .map(|s| s.to_string())
                 }
-                "identifier" => {
-                    func_node.utf8_text(source).ok().map(|s| s.to_string())
-                }
+                "identifier" => func_node.utf8_text(source).ok().map(|s| s.to_string()),
                 _ => None,
             };
             if let Some(name) = call_name {
@@ -569,7 +606,9 @@ mod tests {
 
     fn parse_and_extract(source: &str) -> ExtractionResult {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_go::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_go::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         let plugin = GoPlugin;
         plugin.extract_symbols(&tree, source.as_bytes(), Path::new("test.go"))
@@ -577,9 +616,8 @@ mod tests {
 
     #[test]
     fn test_struct_extraction() {
-        let result = parse_and_extract(
-            "package main\n\ntype Foo struct {\n\tName string\n\tAge  int\n}"
-        );
+        let result =
+            parse_and_extract("package main\n\ntype Foo struct {\n\tName string\n\tAge  int\n}");
         assert_eq!(result.symbols.len(), 3);
         assert_eq!(result.symbols[0].name, "Foo");
         assert_eq!(result.symbols[0].kind, SymbolKind::new("struct"));
@@ -615,9 +653,8 @@ mod tests {
 
     #[test]
     fn test_method_declaration() {
-        let result = parse_and_extract(
-            "package main\n\ntype Foo struct {}\n\nfunc (f *Foo) Bar() {}"
-        );
+        let result =
+            parse_and_extract("package main\n\ntype Foo struct {}\n\nfunc (f *Foo) Bar() {}");
         assert_eq!(result.symbols.len(), 2);
         assert_eq!(result.symbols[1].name, "Bar");
         assert_eq!(result.symbols[1].kind, SymbolKind::new("method"));
@@ -627,18 +664,17 @@ mod tests {
 
     #[test]
     fn test_visibility() {
-        let result = parse_and_extract(
-            "package main\n\ntype foo struct {\n\tname string\n\tAge  int\n}"
-        );
+        let result =
+            parse_and_extract("package main\n\ntype foo struct {\n\tname string\n\tAge  int\n}");
         assert_eq!(result.symbols[0].visibility, Visibility::new("private")); // foo
         assert_eq!(result.symbols[1].visibility, Visibility::new("private")); // name
-        assert_eq!(result.symbols[2].visibility, Visibility::new("public"));  // Age
+        assert_eq!(result.symbols[2].visibility, Visibility::new("public")); // Age
     }
 
     #[test]
     fn test_struct_embedding() {
         let result = parse_and_extract(
-            "package main\n\ntype Base struct {}\n\ntype Child struct {\n\tBase\n}"
+            "package main\n\ntype Base struct {}\n\ntype Child struct {\n\tBase\n}",
         );
         assert_eq!(result.relationships.len(), 1);
         assert_eq!(result.relationships[0].kind, RelationshipKind::Extends);
@@ -650,7 +686,9 @@ mod tests {
         let result = parse_and_extract(
             "package main\n\ntype Reader interface {\n\tRead() error\n}\n\ntype ReadWriter interface {\n\tReader\n\tWrite() error\n}"
         );
-        let extends: Vec<_> = result.relationships.iter()
+        let extends: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Extends)
             .collect();
         assert_eq!(extends.len(), 1);
@@ -659,10 +697,11 @@ mod tests {
 
     #[test]
     fn test_field_type_relationship() {
-        let result = parse_and_extract(
-            "package main\n\ntype Service struct {\n\trepo Repository\n}"
-        );
-        let field_types: Vec<_> = result.relationships.iter()
+        let result =
+            parse_and_extract("package main\n\ntype Service struct {\n\trepo Repository\n}");
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -671,10 +710,10 @@ mod tests {
 
     #[test]
     fn test_param_type_relationship() {
-        let result = parse_and_extract(
-            "package main\n\nfunc Process(r Repository) {}"
-        );
-        let field_types: Vec<_> = result.relationships.iter()
+        let result = parse_and_extract("package main\n\nfunc Process(r Repository) {}");
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -683,10 +722,11 @@ mod tests {
 
     #[test]
     fn test_return_type_relationship() {
-        let result = parse_and_extract(
-            "package main\n\nfunc NewService() Service { return Service{} }"
-        );
-        let field_types: Vec<_> = result.relationships.iter()
+        let result =
+            parse_and_extract("package main\n\nfunc NewService() Service { return Service{} }");
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -695,10 +735,10 @@ mod tests {
 
     #[test]
     fn test_call_relationship() {
-        let result = parse_and_extract(
-            "package main\n\nfunc main() {\n\tProcess()\n}"
-        );
-        let calls: Vec<_> = result.relationships.iter()
+        let result = parse_and_extract("package main\n\nfunc main() {\n\tProcess()\n}");
+        let calls: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Calls)
             .collect();
         assert_eq!(calls.len(), 1);
@@ -707,10 +747,11 @@ mod tests {
 
     #[test]
     fn test_pointer_type_stripped() {
-        let result = parse_and_extract(
-            "package main\n\ntype Service struct {\n\trepo *Repository\n}"
-        );
-        let field_types: Vec<_> = result.relationships.iter()
+        let result =
+            parse_and_extract("package main\n\ntype Service struct {\n\trepo *Repository\n}");
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);

@@ -6,15 +6,15 @@ mod store;
 
 use clap::Parser;
 use cli::{Cli, Commands, Format};
-use engine::{config, indexer, project};
 use engine::indexer::ReindexStats;
+use engine::{config, indexer, project};
 use model::{Symbol, SymbolKind, SymbolQuery};
 use plugin::PluginRegistry;
+use serde::Serialize;
 use std::env;
 use std::path::PathBuf;
 use std::process;
 use store::sqlite::SqliteStore;
-use serde::Serialize;
 use store::Store;
 
 fn main() {
@@ -31,7 +31,12 @@ fn run(cli: Cli) -> anyhow::Result<()> {
         Commands::Init { configs } => cmd_init(verbose, configs),
         Commands::Index => cmd_index(verbose),
         Commands::Status => cmd_status(verbose),
-        Commands::Config { key, value, remove, all } => cmd_config(key, value, remove, all),
+        Commands::Config {
+            key,
+            value,
+            remove,
+            all,
+        } => cmd_config(key, value, remove, all),
         Commands::Find {
             pattern,
             format,
@@ -82,7 +87,15 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             format,
             case_insensitive,
             kind,
-        } => cmd_rename(pattern, new_name, apply, format, case_insensitive, kind, verbose),
+        } => cmd_rename(
+            pattern,
+            new_name,
+            apply,
+            format,
+            case_insensitive,
+            kind,
+            verbose,
+        ),
     }
 }
 
@@ -98,8 +111,12 @@ fn cmd_init(verbose: bool, configs: Vec<String>) -> anyhow::Result<()> {
     for pair in configs.chunks_exact(2) {
         let key = &pair[0];
         let val = &pair[1];
-        let (section, name) = key.split_once('.')
-            .ok_or_else(|| anyhow::anyhow!("Invalid config key '{}'. Use section.key format (e.g. index.languages)", key))?;
+        let (section, name) = key.split_once('.').ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid config key '{}'. Use section.key format (e.g. index.languages)",
+                key
+            )
+        })?;
         if section == "index" && name == "languages" {
             validate_languages(&registry, val)?;
         }
@@ -150,14 +167,24 @@ fn cmd_status(verbose: bool) -> anyhow::Result<()> {
 
     for (lang, ls) in &stats {
         let display = registry.display_name_for(lang);
-        println!("{} {} {}", ls.files, display, if ls.files == 1 { "file" } else { "files" });
+        println!(
+            "{} {} {}",
+            ls.files,
+            display,
+            if ls.files == 1 { "file" } else { "files" }
+        );
     }
     Ok(())
 }
 
 fn print_index_counts(counts: &std::collections::BTreeMap<String, u64>) {
     for (lang, count) in counts {
-        println!("Indexed {} {} {}.", count, lang, if *count == 1 { "file" } else { "files" });
+        println!(
+            "Indexed {} {} {}.",
+            count,
+            lang,
+            if *count == 1 { "file" } else { "files" }
+        );
     }
     if counts.is_empty() {
         println!("No files to index.");
@@ -207,8 +234,12 @@ fn cmd_relational(
     }
     if matches.len() > 1 {
         let mut flags = String::new();
-        if case_insensitive { flags.push_str(" -i"); }
-        if let Some(k) = &kind { flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''"))); }
+        if case_insensitive {
+            flags.push_str(" -i");
+        }
+        if let Some(k) = &kind {
+            flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''")));
+        }
         match format {
             Format::Json => flags.push_str(" -f json"),
             Format::Text => {}
@@ -246,7 +277,12 @@ fn cmd_relational(
     Ok(())
 }
 
-fn cmd_symbols(file: PathBuf, format: Format, kind: Option<String>, verbose: bool) -> anyhow::Result<()> {
+fn cmd_symbols(
+    file: PathBuf,
+    format: Format,
+    kind: Option<String>,
+    verbose: bool,
+) -> anyhow::Result<()> {
     let (store, root) = open_store_and_reindex(verbose)?;
     let cwd = env::current_dir()?;
     let kind = parse_kind(kind);
@@ -287,7 +323,12 @@ fn cmd_package(
     Ok(())
 }
 
-fn print_symbols(symbols: &[Symbol], format: &Format, root: &std::path::Path, cwd: &std::path::Path) {
+fn print_symbols(
+    symbols: &[Symbol],
+    format: &Format,
+    root: &std::path::Path,
+    cwd: &std::path::Path,
+) {
     match format {
         Format::Text => {
             if symbols.is_empty() {
@@ -307,7 +348,11 @@ fn print_symbols(symbols: &[Symbol], format: &Format, root: &std::path::Path, cw
             }
         }
         Format::Json => {
-            println!("{}", serde_json::to_string_pretty(symbols).expect("Symbol serialization should not fail"));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(symbols)
+                    .expect("Symbol serialization should not fail")
+            );
         }
     }
 }
@@ -330,9 +375,13 @@ fn open_store_and_reindex(verbose: bool) -> anyhow::Result<(SqliteStore, PathBuf
 }
 
 fn print_reindex_stats(stats: &ReindexStats) {
-    let changed = !stats.added.is_empty() || !stats.modified.is_empty() || !stats.deleted.is_empty();
+    let changed =
+        !stats.added.is_empty() || !stats.modified.is_empty() || !stats.deleted.is_empty();
     if !changed {
-        eprintln!("[verbose] index up-to-date ({} files, {}ms)", stats.unchanged, stats.elapsed_ms);
+        eprintln!(
+            "[verbose] index up-to-date ({} files, {}ms)",
+            stats.unchanged, stats.elapsed_ms
+        );
         return;
     }
     for f in &stats.added {
@@ -346,11 +395,20 @@ fn print_reindex_stats(stats: &ReindexStats) {
     }
     eprintln!(
         "[verbose] reindexed in {}ms ({} added, {} modified, {} deleted, {} unchanged)",
-        stats.elapsed_ms, stats.added.len(), stats.modified.len(), stats.deleted.len(), stats.unchanged
+        stats.elapsed_ms,
+        stats.added.len(),
+        stats.modified.len(),
+        stats.deleted.len(),
+        stats.unchanged
     );
 }
 
-fn cmd_config(key: Option<String>, value: Option<String>, remove: bool, all: bool) -> anyhow::Result<()> {
+fn cmd_config(
+    key: Option<String>,
+    value: Option<String>,
+    remove: bool,
+    all: bool,
+) -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
     let root = project::find_project_root(&cwd)?;
 
@@ -373,8 +431,12 @@ fn cmd_config(key: Option<String>, value: Option<String>, remove: bool, all: boo
         }
     };
 
-    let (section, name) = key.split_once('.')
-        .ok_or_else(|| anyhow::anyhow!("Invalid config key '{}'. Use section.key format (e.g. index.languages)", key))?;
+    let (section, name) = key.split_once('.').ok_or_else(|| {
+        anyhow::anyhow!(
+            "Invalid config key '{}'. Use section.key format (e.g. index.languages)",
+            key
+        )
+    })?;
 
     if remove {
         config::remove_value(&root, section, name)?;
@@ -401,9 +463,21 @@ fn cmd_config(key: Option<String>, value: Option<String>, remove: bool, all: boo
 
 fn validate_languages(registry: &PluginRegistry, raw: &str) -> anyhow::Result<()> {
     let all = registry.all_language_names();
-    let requested: Vec<&str> = raw.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
-    let valid: Vec<&str> = requested.iter().filter(|l| all.contains(l)).copied().collect();
-    let invalid: Vec<&str> = requested.iter().filter(|l| !all.contains(l)).copied().collect();
+    let requested: Vec<&str> = raw
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let valid: Vec<&str> = requested
+        .iter()
+        .filter(|l| all.contains(l))
+        .copied()
+        .collect();
+    let invalid: Vec<&str> = requested
+        .iter()
+        .filter(|l| !all.contains(l))
+        .copied()
+        .collect();
 
     if !invalid.is_empty() {
         let supported = all.join(", ");
@@ -414,7 +488,11 @@ fn validate_languages(registry: &PluginRegistry, raw: &str) -> anyhow::Result<()
         };
         anyhow::bail!(
             "Unsupported {}: '{}'\n\nSupported languages: {}\n\nExample: {}",
-            if invalid.len() == 1 { "language" } else { "languages" },
+            if invalid.len() == 1 {
+                "language"
+            } else {
+                "languages"
+            },
             invalid.join("', '"),
             supported,
             example
@@ -423,7 +501,10 @@ fn validate_languages(registry: &PluginRegistry, raw: &str) -> anyhow::Result<()
     Ok(())
 }
 
-fn load_languages(root: &std::path::Path, registry: &PluginRegistry) -> anyhow::Result<Option<Vec<String>>> {
+fn load_languages(
+    root: &std::path::Path,
+    registry: &PluginRegistry,
+) -> anyhow::Result<Option<Vec<String>>> {
     match config::configured_languages(root)? {
         None => Ok(None),
         Some(langs) => {
@@ -454,12 +535,20 @@ fn cmd_rename(
     let matches = store.find_symbol(&query)?;
 
     if matches.is_empty() {
-        anyhow::bail!("No symbol found matching '{}'. Try: codix find '{}*'", pattern, pattern);
+        anyhow::bail!(
+            "No symbol found matching '{}'. Try: codix find '{}*'",
+            pattern,
+            pattern
+        );
     }
     if matches.len() > 1 {
         let mut flags = String::new();
-        if case_insensitive { flags.push_str(" -i"); }
-        if let Some(k) = &kind { flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''"))); }
+        if case_insensitive {
+            flags.push_str(" -i");
+        }
+        if let Some(k) = &kind {
+            flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''")));
+        }
         match format {
             Format::Json => flags.push_str(" -f json"),
             Format::Text => {}
@@ -471,9 +560,14 @@ fn cmd_rename(
             let escaped_name = sym.qualified_name.replace('\'', "'\\''");
             msg.push_str(&format!(
                 "  {}:{}  {} {} {}\n  \u{2192} codix rename '{}' '{}'{}\n",
-                path, sym.line,
-                sym.visibility.as_str(), sym.kind.as_str(), label,
-                escaped_name, new_name, flags
+                path,
+                sym.line,
+                sym.visibility.as_str(),
+                sym.kind.as_str(),
+                label,
+                escaped_name,
+                new_name,
+                flags
             ));
         }
         anyhow::bail!("{}", msg.trim_end());
@@ -496,27 +590,45 @@ fn cmd_rename(
         Format::Text => {
             if apply {
                 engine::rename::apply_rename(&root, &store, sym, &new_name, &result)?;
-                println!("Renamed {} {} in {} {}.",
+                println!(
+                    "Renamed {} {} in {} {}.",
                     result.total_occurrences(),
-                    if result.total_occurrences() == 1 { "occurrence" } else { "occurrences" },
+                    if result.total_occurrences() == 1 {
+                        "occurrence"
+                    } else {
+                        "occurrences"
+                    },
                     result.total_files(),
-                    if result.total_files() == 1 { "file" } else { "files" },
+                    if result.total_files() == 1 {
+                        "file"
+                    } else {
+                        "files"
+                    },
                 );
             } else {
                 for file_occ in &result.changes {
                     let path = project::display_path(&root, &cwd, &file_occ.file_path);
                     for occ in &file_occ.occurrences {
-                        println!("{}:{}:{}  {} \u{2192} {}",
-                            path, occ.line, occ.column,
-                            occ.old_text, new_name,
+                        println!(
+                            "{}:{}:{}  {} \u{2192} {}",
+                            path, occ.line, occ.column, occ.old_text, new_name,
                         );
                     }
                 }
-                println!("\n{} {} in {} {}",
+                println!(
+                    "\n{} {} in {} {}",
                     result.total_occurrences(),
-                    if result.total_occurrences() == 1 { "occurrence" } else { "occurrences" },
+                    if result.total_occurrences() == 1 {
+                        "occurrence"
+                    } else {
+                        "occurrences"
+                    },
                     result.total_files(),
-                    if result.total_files() == 1 { "file" } else { "files" },
+                    if result.total_files() == 1 {
+                        "file"
+                    } else {
+                        "files"
+                    },
                 );
             }
         }
@@ -545,16 +657,20 @@ fn cmd_rename(
             }
             let output = JsonOutput {
                 applied: apply,
-                changes: result.changes.iter().flat_map(|fc| {
-                    let new_name = new_name.clone();
-                    fc.occurrences.iter().map(move |occ| JsonChange {
-                        file: fc.file_path.clone(),
-                        line: occ.line,
-                        column: occ.column,
-                        old: occ.old_text.clone(),
-                        new: new_name.clone(),
+                changes: result
+                    .changes
+                    .iter()
+                    .flat_map(|fc| {
+                        let new_name = new_name.clone();
+                        fc.occurrences.iter().map(move |occ| JsonChange {
+                            file: fc.file_path.clone(),
+                            line: occ.line,
+                            column: occ.column,
+                            old: occ.old_text.clone(),
+                            new: new_name.clone(),
+                        })
                     })
-                }).collect(),
+                    .collect(),
                 summary: JsonSummary {
                     occurrences: result.total_occurrences(),
                     files: result.total_files(),

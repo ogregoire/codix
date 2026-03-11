@@ -2,7 +2,12 @@ use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 #[derive(Parser)]
-#[command(name = "codix", version, disable_version_flag = true, about = "Code symbol indexer for AI agents")]
+#[command(
+    name = "codix",
+    version,
+    disable_version_flag = true,
+    about = "Code symbol indexer for AI agents"
+)]
 pub struct Cli {
     /// Print version
     #[arg(long, action = clap::ArgAction::Version)]

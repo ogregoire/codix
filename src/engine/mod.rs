@@ -1,4 +1,4 @@
 pub mod config;
-pub mod project;
 pub mod indexer;
+pub mod project;
 pub mod rename;

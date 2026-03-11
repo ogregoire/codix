@@ -1,11 +1,15 @@
-use std::path::Path;
 use crate::model::*;
+use std::path::Path;
 
 pub struct PythonPlugin;
 
 impl super::LanguagePlugin for PythonPlugin {
-    fn name(&self) -> &str { "python" }
-    fn display_name(&self) -> &str { "Python" }
+    fn name(&self) -> &str {
+        "python"
+    }
+    fn display_name(&self) -> &str {
+        "Python"
+    }
 
     fn can_handle(&self, path: &Path) -> bool {
         path.extension()
@@ -85,10 +89,24 @@ fn extract_decorated(
         let pre_len = symbols.len();
         match def.kind() {
             "class_definition" => {
-                extract_class(def, source, parent_local_id, parent_name, symbols, relationships);
+                extract_class(
+                    def,
+                    source,
+                    parent_local_id,
+                    parent_name,
+                    symbols,
+                    relationships,
+                );
             }
             "function_definition" => {
-                extract_function(def, source, parent_local_id, parent_name, symbols, relationships);
+                extract_function(
+                    def,
+                    source,
+                    parent_local_id,
+                    parent_name,
+                    symbols,
+                    relationships,
+                );
             }
             _ => {}
         }
@@ -214,19 +232,47 @@ fn extract_class(
         for child in body.children(&mut body_cursor) {
             match child.kind() {
                 "function_definition" => {
-                    extract_function(child, source, Some(local_id), &qualified_name, symbols, relationships);
+                    extract_function(
+                        child,
+                        source,
+                        Some(local_id),
+                        &qualified_name,
+                        symbols,
+                        relationships,
+                    );
                 }
                 "decorated_definition" => {
-                    extract_decorated(child, source, Some(local_id), &qualified_name, symbols, relationships);
+                    extract_decorated(
+                        child,
+                        source,
+                        Some(local_id),
+                        &qualified_name,
+                        symbols,
+                        relationships,
+                    );
                 }
                 "class_definition" => {
-                    extract_class(child, source, Some(local_id), &qualified_name, symbols, relationships);
+                    extract_class(
+                        child,
+                        source,
+                        Some(local_id),
+                        &qualified_name,
+                        symbols,
+                        relationships,
+                    );
                 }
                 "expression_statement" => {
                     let mut ec = child.walk();
                     for expr in child.children(&mut ec) {
                         if expr.kind() == "assignment" {
-                            extract_class_field(expr, source, local_id, &qualified_name, symbols, relationships);
+                            extract_class_field(
+                                expr,
+                                source,
+                                local_id,
+                                &qualified_name,
+                                symbols,
+                                relationships,
+                            );
                         }
                     }
                 }
@@ -406,7 +452,12 @@ fn extract_param_type_relationships(
                     }
                 }
                 if let Some(type_node) = child.child_by_field_name("type") {
-                    extract_field_type_relationships(type_node, source, source_local_id, relationships);
+                    extract_field_type_relationships(
+                        type_node,
+                        source,
+                        source_local_id,
+                        relationships,
+                    );
                 }
             }
             _ => {}
@@ -482,11 +533,10 @@ fn collect_calls(
         if let Some(func) = node.child_by_field_name("function") {
             let call_name = match func.kind() {
                 "identifier" => func.utf8_text(source).ok().map(|s| s.to_string()),
-                "attribute" => {
-                    func.child_by_field_name("attribute")
-                        .and_then(|a| a.utf8_text(source).ok())
-                        .map(|s| s.to_string())
-                }
+                "attribute" => func
+                    .child_by_field_name("attribute")
+                    .and_then(|a| a.utf8_text(source).ok())
+                    .map(|s| s.to_string()),
                 _ => None,
             };
             if let Some(name) = call_name {
@@ -513,7 +563,9 @@ mod tests {
 
     fn parse_and_extract(code: &str) -> ExtractionResult {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_python::LANGUAGE.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_python::LANGUAGE.into())
+            .unwrap();
         let tree = parser.parse(code, None).unwrap();
         let plugin = PythonPlugin;
         plugin.extract_symbols(&tree, code.as_bytes(), std::path::Path::new("test.py"))
@@ -589,7 +641,9 @@ mod tests {
     #[test]
     fn test_extends() {
         let result = parse_and_extract("class Foo(Bar, Baz):\n    pass\n");
-        let extends: Vec<_> = result.relationships.iter()
+        let extends: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Extends)
             .collect();
         assert_eq!(extends.len(), 2);
@@ -600,7 +654,9 @@ mod tests {
     #[test]
     fn test_field_type_relationship() {
         let result = parse_and_extract("class Foo:\n    repo: Repository\n");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -610,7 +666,9 @@ mod tests {
     #[test]
     fn test_param_type_relationship() {
         let result = parse_and_extract("def process(item: Item) -> None:\n    pass\n");
-        let field_types: Vec<_> = result.relationships.iter()
+        let field_types: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::FieldType)
             .collect();
         assert_eq!(field_types.len(), 1);
@@ -620,7 +678,9 @@ mod tests {
     #[test]
     fn test_decorator_annotated_by() {
         let result = parse_and_extract("@dataclass\nclass Foo:\n    pass\n");
-        let annotations: Vec<_> = result.relationships.iter()
+        let annotations: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::AnnotatedBy)
             .collect();
         assert_eq!(annotations.len(), 1);
@@ -630,7 +690,9 @@ mod tests {
     #[test]
     fn test_call_relationship() {
         let result = parse_and_extract("def main():\n    process()\n");
-        let calls: Vec<_> = result.relationships.iter()
+        let calls: Vec<_> = result
+            .relationships
+            .iter()
             .filter(|r| r.kind == RelationshipKind::Calls)
             .collect();
         assert_eq!(calls.len(), 1);

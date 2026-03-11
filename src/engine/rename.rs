@@ -1,10 +1,10 @@
-use std::collections::HashSet;
-use std::path::Path;
-use anyhow::Result;
 use crate::model::*;
 use crate::plugin::PluginRegistry;
 use crate::store::Store;
+use anyhow::Result;
 use serde::Serialize;
+use std::collections::HashSet;
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FileOccurrences {
@@ -42,12 +42,17 @@ pub fn find_occurrences(
     }
 
     // Determine language from file record
-    let file_record = store.get_file(&symbol.file_path)?
+    let file_record = store
+        .get_file(&symbol.file_path)?
         .ok_or_else(|| anyhow::anyhow!("File '{}' not found in index", symbol.file_path))?;
 
-    let plugin = registry.all_plugins().into_iter()
+    let plugin = registry
+        .all_plugins()
+        .into_iter()
         .find(|p| p.name() == file_record.language)
-        .ok_or_else(|| anyhow::anyhow!("No plugin found for language '{}'", file_record.language))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("No plugin found for language '{}'", file_record.language)
+        })?;
 
     // Check plugin support
     if !plugin.supports(PluginCapability::Rename) {
@@ -84,13 +89,16 @@ pub fn find_occurrences(
         // Check if this file's language supports rename
         let file_rec = store.get_file(file_path)?;
         if let Some(ref fr) = file_rec {
-            let file_plugin = registry.all_plugins().into_iter()
+            let file_plugin = registry
+                .all_plugins()
+                .into_iter()
                 .find(|p| p.name() == fr.language);
             if let Some(fp) = file_plugin {
                 if !fp.supports(PluginCapability::Rename) {
                     warnings.push(format!(
                         "Warning: references in {} skipped ({} rename not supported)",
-                        file_path, fp.display_name()
+                        file_path,
+                        fp.display_name()
                     ));
                     continue;
                 }
@@ -99,7 +107,9 @@ pub fn find_occurrences(
 
         // Use the file's own plugin (may differ from symbol's plugin in cross-language projects)
         let file_plugin = if let Some(ref fr) = file_rec {
-            registry.all_plugins().into_iter()
+            registry
+                .all_plugins()
+                .into_iter()
                 .find(|p| p.name() == fr.language)
                 .unwrap_or(plugin)
         } else {
@@ -111,7 +121,8 @@ pub fn find_occurrences(
 
         let mut parser = tree_sitter::Parser::new();
         parser.set_language(&file_plugin.tree_sitter_language())?;
-        let tree = parser.parse(&source, None)
+        let tree = parser
+            .parse(&source, None)
             .ok_or_else(|| anyhow::anyhow!("Failed to parse {}", file_path))?;
 
         match file_plugin.find_rename_occurrences(
@@ -179,9 +190,10 @@ pub fn apply_rename(
     let old_name = &symbol.name;
     let old_qualified = &symbol.qualified_name;
     let new_qualified = build_new_qualified_name(old_qualified, old_name, new_name);
-    let new_signature = symbol.signature.as_ref().map(|sig| {
-        build_new_signature(sig, old_name, new_name)
-    });
+    let new_signature = symbol
+        .signature
+        .as_ref()
+        .map(|sig| build_new_signature(sig, old_name, new_name));
 
     store.update_symbol_name(
         symbol.id,
@@ -192,8 +204,12 @@ pub fn apply_rename(
 
     // For class renames, cascade to children
     let kind_str = symbol.kind.as_str();
-    if kind_str == "class" || kind_str == "interface" || kind_str == "enum"
-        || kind_str == "record" || kind_str == "annotation" {
+    if kind_str == "class"
+        || kind_str == "interface"
+        || kind_str == "enum"
+        || kind_str == "record"
+        || kind_str == "annotation"
+    {
         store.update_child_qualified_names(symbol.id, old_qualified, &new_qualified)?;
     }
 

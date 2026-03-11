@@ -1,5 +1,5 @@
+use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
-use anyhow::{Result, bail};
 
 /// Walk up from `start` looking for a `.codix` directory.
 pub fn find_project_root(start: &Path) -> Result<PathBuf> {
@@ -48,8 +48,8 @@ pub fn display_path(root: &Path, cwd: &Path, stored_path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use std::fs;
+    use tempfile::TempDir;
 
     #[test]
     fn test_find_root_in_current_dir() {

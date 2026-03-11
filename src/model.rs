@@ -163,7 +163,9 @@ mod tests {
     #[test]
     fn test_visibility_display() {
         assert_eq!(Visibility::new("public").as_str(), "public");
-        assert_eq!(Visibility::new("package-private").as_str(), "package-private");
+        assert_eq!(
+            Visibility::new("package-private").as_str(),
+            "package-private"
+        );
     }
-
 }

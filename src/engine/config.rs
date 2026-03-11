@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 
 pub fn config_path(root: &Path) -> PathBuf {
     root.join(".codix/config")
@@ -135,7 +135,7 @@ pub fn read_all(root: &Path) -> Result<Vec<(String, String)>> {
     for line in content.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') && trimmed.ends_with(']') {
-            current_section = trimmed[1..trimmed.len()-1].to_string();
+            current_section = trimmed[1..trimmed.len() - 1].to_string();
             continue;
         }
         if let Some((k, v)) = parse_kv(trimmed) {
@@ -149,7 +149,11 @@ pub fn configured_languages(root: &Path) -> Result<Option<Vec<String>>> {
     match read_value(root, "index", "languages")? {
         None => Ok(None),
         Some(val) => {
-            let langs: Vec<String> = val.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+            let langs: Vec<String> = val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
             if langs.is_empty() {
                 Ok(None)
             } else {
@@ -199,7 +203,10 @@ mod tests {
     fn test_read_after_write() {
         let (_tmp, root) = setup();
         write_value(&root, "index", "languages", "java,go").unwrap();
-        assert_eq!(read_value(&root, "index", "languages").unwrap(), Some("java,go".to_string()));
+        assert_eq!(
+            read_value(&root, "index", "languages").unwrap(),
+            Some("java,go".to_string())
+        );
     }
 
     #[test]
@@ -249,6 +256,9 @@ mod tests {
         let (_tmp, root) = setup();
         assert_eq!(configured_languages(&root).unwrap(), None);
         write_value(&root, "index", "languages", "java,go").unwrap();
-        assert_eq!(configured_languages(&root).unwrap(), Some(vec!["java".to_string(), "go".to_string()]));
+        assert_eq!(
+            configured_languages(&root).unwrap(),
+            Some(vec!["java".to_string(), "go".to_string()])
+        );
     }
 }

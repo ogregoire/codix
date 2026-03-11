@@ -54,7 +54,10 @@ fn test_init_indexes_files() {
 #[test]
 fn test_no_init_error() {
     let tmp = TempDir::new().unwrap();
-    let out = codix_cmd(tmp.path()).args(["find", "Foo"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["find", "Foo"])
+        .output()
+        .unwrap();
     assert!(!out.status.success());
     let stderr = String::from_utf8(out.stderr).unwrap();
     assert!(stderr.contains("codix init"));
@@ -66,7 +69,10 @@ fn test_find_symbol() {
     setup_java_project(tmp.path());
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
-    let out = codix_cmd(tmp.path()).args(["find", "Foo"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["find", "Foo"])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Foo"));
@@ -79,7 +85,10 @@ fn test_find_glob() {
     setup_java_project(tmp.path());
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
-    let out = codix_cmd(tmp.path()).args(["find", "*oo"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["find", "*oo"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Foo"));
 }
@@ -225,13 +234,15 @@ public interface Repository {
     void save(Object o);
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     fs::write(
         dir.join("src/foo/Person.java"),
         r#"package com.foo;
 public class Person {}
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::create_dir_all(dir.join("src/bar")).unwrap();
     fs::write(
@@ -244,7 +255,8 @@ public class UserService implements Repository {
     public void save(Object o) {}
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::create_dir_all(dir.join("src/baz")).unwrap();
     fs::write(
@@ -253,7 +265,8 @@ public class UserService implements Repository {
 import com.foo.*;
 public class Client extends Person {}
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -262,7 +275,10 @@ fn test_cross_package_import_resolution() {
     setup_multi_package_project(tmp.path());
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
-    let out = codix_cmd(tmp.path()).args(["impls", "com.foo.Repository"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["impls", "com.foo.Repository"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("UserService"));
 }
@@ -273,7 +289,10 @@ fn test_wildcard_import_resolution() {
     setup_multi_package_project(tmp.path());
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
-    let out = codix_cmd(tmp.path()).args(["supers", "Client"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["supers", "Client"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Person"));
 }
@@ -284,10 +303,19 @@ fn test_same_package_implicit_resolution() {
     setup_multi_package_project(tmp.path());
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
-    let out = codix_cmd(tmp.path()).args(["refs", "com.foo.Person"]).output().unwrap();
+    let out = codix_cmd(tmp.path())
+        .args(["refs", "com.foo.Person"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("UserService"), "UserService should reference Person via field type");
-    assert!(stdout.contains("Client"), "Client should reference Person via extends");
+    assert!(
+        stdout.contains("UserService"),
+        "UserService should reference Person via field type"
+    );
+    assert!(
+        stdout.contains("Client"),
+        "Client should reference Person via extends"
+    );
 }
 
 fn setup_method_call_project(dir: &std::path::Path) {
@@ -300,7 +328,8 @@ public interface Repository {
     Object findById(int id);
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 
     fs::create_dir_all(dir.join("src/bar")).unwrap();
     fs::write(
@@ -314,7 +343,8 @@ public class Service {
     }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -328,7 +358,10 @@ fn test_callers_with_receiver_resolution() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("doWork"), "doWork should be a caller of Repository.save");
+    assert!(
+        stdout.contains("doWork"),
+        "doWork should be a caller of Repository.save"
+    );
 }
 
 #[test]
@@ -361,7 +394,8 @@ public class Outer {
     }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
     let out = codix_cmd(tmp.path())
@@ -371,9 +405,15 @@ public class Outer {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Outer"), "should contain Outer class");
     assert!(stdout.contains("Inner"), "should contain Inner class");
-    assert!(stdout.contains("Callback"), "should contain Callback interface");
+    assert!(
+        stdout.contains("Callback"),
+        "should contain Callback interface"
+    );
     assert!(stdout.contains("doWork"), "should contain Inner's method");
-    assert!(stdout.contains("onComplete"), "should contain Callback's method");
+    assert!(
+        stdout.contains("onComplete"),
+        "should contain Callback's method"
+    );
 }
 
 #[test]
@@ -385,7 +425,8 @@ fn test_annotation_refs() {
         r#"package com.foo;
 public @interface MyAnnotation {}
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     fs::write(
         tmp.path().join("src/Service.java"),
         r#"package com.foo;
@@ -394,7 +435,8 @@ public class Service {
     public void save() {}
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
     let out = codix_cmd(tmp.path())
@@ -402,7 +444,10 @@ public class Service {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("save"), "save should reference MyAnnotation via @MyAnnotation");
+    assert!(
+        stdout.contains("save"),
+        "save should reference MyAnnotation via @MyAnnotation"
+    );
 }
 
 #[test]
@@ -418,7 +463,8 @@ public record Point(int x, int y) {
     }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     codix_cmd(tmp.path()).arg("init").output().unwrap();
 
     let out = codix_cmd(tmp.path())
@@ -427,8 +473,14 @@ public record Point(int x, int y) {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("record"), "should contain Point record");
-    assert!(stdout.contains("constructor"), "should contain compact constructor");
-    assert!(stdout.contains("Point(int,int)"), "compact constructor should have record's parameters");
+    assert!(
+        stdout.contains("constructor"),
+        "should contain compact constructor"
+    );
+    assert!(
+        stdout.contains("Point(int,int)"),
+        "compact constructor should have record's parameters"
+    );
 }
 
 #[test]
@@ -473,7 +525,8 @@ const helper = () => {
     return 42;
 };
 "#,
-    ).unwrap();
+    )
+    .unwrap();
     fs::write(
         dir.join("src/service.ts"),
         r#"class Service extends App {
@@ -482,7 +535,8 @@ const helper = () => {
     }
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -525,7 +579,11 @@ fn test_js_init_indexes_js_files() {
     let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Indexed 2 JavaScript files"), "stdout was: {}", stdout);
+    assert!(
+        stdout.contains("Indexed 2 JavaScript files"),
+        "stdout was: {}",
+        stdout
+    );
 }
 
 fn setup_go_project(dir: &std::path::Path) {
@@ -554,7 +612,8 @@ func NewService(r Repository) *Service {
 	return &Service{repo: r}
 }
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -568,13 +627,19 @@ fn test_go_struct_and_interface() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Repository"), "should contain Repository interface");
+    assert!(
+        stdout.contains("Repository"),
+        "should contain Repository interface"
+    );
     assert!(stdout.contains("interface"), "should show interface kind");
     assert!(stdout.contains("Item"), "should contain Item struct");
     assert!(stdout.contains("struct"), "should show struct kind");
     assert!(stdout.contains("Service"), "should contain Service struct");
     assert!(stdout.contains("Process"), "should contain Process method");
-    assert!(stdout.contains("NewService"), "should contain NewService function");
+    assert!(
+        stdout.contains("NewService"),
+        "should contain NewService function"
+    );
 }
 
 #[test]
@@ -588,7 +653,10 @@ fn test_go_field_type_refs() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+    assert!(
+        stdout.contains("repo"),
+        "Service.repo should reference Repository via field type"
+    );
 }
 
 #[test]
@@ -598,7 +666,11 @@ fn test_go_init_indexes_files() {
     let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Indexed 1 Go file"), "stdout was: {}", stdout);
+    assert!(
+        stdout.contains("Indexed 1 Go file"),
+        "stdout was: {}",
+        stdout
+    );
 }
 
 fn setup_rust_project(dir: &std::path::Path) {
@@ -636,7 +708,8 @@ pub enum Status {
 
 pub type AppResult = Result<String, String>;
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -650,15 +723,24 @@ fn test_rust_symbols() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Repository"), "should contain Repository trait");
+    assert!(
+        stdout.contains("Repository"),
+        "should contain Repository trait"
+    );
     assert!(stdout.contains("trait"), "should show trait kind");
     assert!(stdout.contains("Item"), "should contain Item struct");
     assert!(stdout.contains("Service"), "should contain Service struct");
     assert!(stdout.contains("process"), "should contain process method");
     assert!(stdout.contains("Status"), "should contain Status enum");
     assert!(stdout.contains("Active"), "should contain Active variant");
-    assert!(stdout.contains("Inactive"), "should contain Inactive variant");
-    assert!(stdout.contains("AppResult"), "should contain AppResult type alias");
+    assert!(
+        stdout.contains("Inactive"),
+        "should contain Inactive variant"
+    );
+    assert!(
+        stdout.contains("AppResult"),
+        "should contain AppResult type alias"
+    );
     assert!(stdout.contains("type-alias"), "should show type-alias kind");
 }
 
@@ -673,7 +755,10 @@ fn test_rust_field_type_refs() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+    assert!(
+        stdout.contains("repo"),
+        "Service.repo should reference Repository via field type"
+    );
 }
 
 #[test]
@@ -683,7 +768,11 @@ fn test_rust_init_indexes_files() {
     let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Indexed 1 Rust file"), "stdout was: {}", stdout);
+    assert!(
+        stdout.contains("Indexed 1 Rust file"),
+        "stdout was: {}",
+        stdout
+    );
 }
 
 fn setup_python_project(dir: &std::path::Path) {
@@ -721,7 +810,8 @@ class Service:
 class Config:
     debug: bool
 "#,
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 #[test]
@@ -735,12 +825,18 @@ fn test_python_symbols() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Repository"), "should contain Repository class");
+    assert!(
+        stdout.contains("Repository"),
+        "should contain Repository class"
+    );
     assert!(stdout.contains("class"), "should show class kind");
     assert!(stdout.contains("Item"), "should contain Item class");
     assert!(stdout.contains("Service"), "should contain Service class");
     assert!(stdout.contains("__init__"), "should contain constructor");
-    assert!(stdout.contains("constructor"), "should show constructor kind");
+    assert!(
+        stdout.contains("constructor"),
+        "should show constructor kind"
+    );
     assert!(stdout.contains("process"), "should contain process method");
     assert!(stdout.contains("Config"), "should contain Config class");
 }
@@ -756,7 +852,10 @@ fn test_python_field_type_refs() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+    assert!(
+        stdout.contains("repo"),
+        "Service.repo should reference Repository via field type"
+    );
 }
 
 #[test]
@@ -766,7 +865,11 @@ fn test_python_init_indexes_files() {
     let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.contains("Indexed 1 Python file"), "stdout was: {}", stdout);
+    assert!(
+        stdout.contains("Indexed 1 Python file"),
+        "stdout was: {}",
+        stdout
+    );
 }
 
 fn setup_rename_project(dir: &std::path::Path) {
@@ -817,7 +920,10 @@ fn test_rename_dry_run() {
     );
     assert!(stdout.contains("save"), "should show old name");
     assert!(stdout.contains("findById"), "should show new name");
-    assert!(stdout.contains("occurrence"), "should show occurrence count");
+    assert!(
+        stdout.contains("occurrence"),
+        "should show occurrence count"
+    );
 
     // File should NOT be modified (dry-run)
     let content = fs::read_to_string(tmp.path().join("src/UserService.java")).unwrap();

@@ -1,5 +1,5 @@
-use std::path::Path;
 use crate::model::*;
+use std::path::Path;
 
 #[cfg(feature = "lang-go")]
 pub mod go;
@@ -14,7 +14,9 @@ pub mod rust;
 
 pub trait LanguagePlugin {
     fn name(&self) -> &str;
-    fn display_name(&self) -> &str { self.name() }
+    fn display_name(&self) -> &str {
+        self.name()
+    }
     fn can_handle(&self, path: &Path) -> bool;
     fn tree_sitter_language(&self) -> tree_sitter::Language;
     fn extract_symbols(
@@ -48,7 +50,9 @@ pub struct PluginRegistry {
 
 impl PluginRegistry {
     pub fn new() -> Self {
-        let mut registry = Self { plugins: Vec::new() };
+        let mut registry = Self {
+            plugins: Vec::new(),
+        };
         #[cfg(feature = "lang-go")]
         registry.register(Box::new(go::GoPlugin));
         #[cfg(feature = "lang-java")]
@@ -71,7 +75,8 @@ impl PluginRegistry {
     }
 
     pub fn display_name_for(&self, name: &str) -> String {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .find(|p| p.name() == name)
             .map(|p| p.display_name().to_string())
             .unwrap_or_else(|| name.to_string())
@@ -82,14 +87,16 @@ impl PluginRegistry {
     }
 
     pub fn supported_languages_for(&self, capability: PluginCapability) -> Vec<&str> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|p| p.supports(capability))
             .map(|p| p.display_name())
             .collect()
     }
 
     pub fn plugins_for_languages(&self, languages: &[String]) -> Vec<&dyn LanguagePlugin> {
-        self.plugins.iter()
+        self.plugins
+            .iter()
             .filter(|p| languages.iter().any(|l| l == p.name()))
             .map(|p| p.as_ref())
             .collect()

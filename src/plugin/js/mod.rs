@@ -1,6 +1,6 @@
-use std::path::Path;
-use crate::model::*;
 use super::LanguagePlugin;
+use crate::model::*;
+use std::path::Path;
 
 pub struct JsPlugin;
 
@@ -150,12 +150,16 @@ fn extract_class(
         for member in body.children(&mut body_cursor) {
             match member.kind() {
                 "method_definition" => {
-                    if let Some(sym) = extract_method(member, source, &name, class_local_id, symbols.len()) {
+                    if let Some(sym) =
+                        extract_method(member, source, &name, class_local_id, symbols.len())
+                    {
                         symbols.push(sym);
                     }
                 }
                 "public_field_definition" => {
-                    if let Some(sym) = extract_field(member, source, &name, class_local_id, symbols.len()) {
+                    if let Some(sym) =
+                        extract_field(member, source, &name, class_local_id, symbols.len())
+                    {
                         symbols.push(sym);
                     }
                 }
@@ -170,7 +174,8 @@ fn extract_function_declaration(
     source: &[u8],
     local_id: usize,
 ) -> Option<ExtractedSymbol> {
-    let name = node.child_by_field_name("name")
+    let name = node
+        .child_by_field_name("name")
         .and_then(|n| n.utf8_text(source).ok())?
         .to_string();
 
@@ -203,11 +208,14 @@ fn extract_variable_functions(
     for child in node.children(&mut cursor) {
         if child.kind() == "variable_declarator" {
             let value = child.child_by_field_name("value");
-            let is_function = value.map(|v| matches!(v.kind(), "arrow_function" | "function_expression")).unwrap_or(false);
+            let is_function = value
+                .map(|v| matches!(v.kind(), "arrow_function" | "function_expression"))
+                .unwrap_or(false);
             if !is_function {
                 continue;
             }
-            let name = child.child_by_field_name("name")
+            let name = child
+                .child_by_field_name("name")
                 .and_then(|n| n.utf8_text(source).ok());
             if let Some(name) = name {
                 let start = node.start_position();
@@ -262,7 +270,11 @@ fn extract_method(
         signature: Some(format!("{}()", name)),
         qualified_name,
         kind,
-        visibility: if is_private { Visibility::new("private") } else { Visibility::new("public") },
+        visibility: if is_private {
+            Visibility::new("private")
+        } else {
+            Visibility::new("public")
+        },
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -296,7 +308,11 @@ fn extract_field(
         signature: None,
         qualified_name,
         kind: SymbolKind::new("field"),
-        visibility: if is_private { Visibility::new("private") } else { Visibility::new("public") },
+        visibility: if is_private {
+            Visibility::new("private")
+        } else {
+            Visibility::new("public")
+        },
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -313,7 +329,9 @@ mod tests {
 
     fn parse_and_extract(source: &str) -> ExtractionResult {
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&tree_sitter_typescript::LANGUAGE_TSX.into()).unwrap();
+        parser
+            .set_language(&tree_sitter_typescript::LANGUAGE_TSX.into())
+            .unwrap();
         let tree = parser.parse(source, None).unwrap();
         let plugin = JsPlugin;
         plugin.extract_symbols(&tree, source.as_bytes(), Path::new("test.js"))
@@ -322,7 +340,7 @@ mod tests {
     #[test]
     fn test_class_extraction() {
         let result = parse_and_extract(
-            "class Foo {\n  #name;\n  constructor(name) { this.#name = name; }\n  run() {}\n}"
+            "class Foo {\n  #name;\n  constructor(name) { this.#name = name; }\n  run() {}\n}",
         );
         assert_eq!(result.symbols.len(), 4);
         assert_eq!(result.symbols[0].name, "Foo");
@@ -398,9 +416,8 @@ mod tests {
 
     #[test]
     fn test_typescript_file() {
-        let result = parse_and_extract(
-            "class Service {\n  private name: string;\n  serve(): void {}\n}"
-        );
+        let result =
+            parse_and_extract("class Service {\n  private name: string;\n  serve(): void {}\n}");
         assert_eq!(result.symbols.len(), 3);
         assert_eq!(result.symbols[0].name, "Service");
     }
