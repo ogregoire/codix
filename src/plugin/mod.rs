@@ -2,6 +2,7 @@ use std::path::Path;
 use crate::model::*;
 
 pub mod java;
+pub mod js;
 
 pub trait LanguagePlugin {
     fn name(&self) -> &str;
@@ -24,6 +25,7 @@ impl PluginRegistry {
     pub fn new() -> Self {
         let mut registry = Self { plugins: Vec::new() };
         registry.register(Box::new(java::JavaPlugin));
+        registry.register(Box::new(js::JsPlugin));
         registry
     }
 
