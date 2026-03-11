@@ -4,6 +4,7 @@ use crate::model::*;
 pub mod go;
 pub mod java;
 pub mod js;
+pub mod python;
 pub mod rust;
 
 pub trait LanguagePlugin {
@@ -29,6 +30,7 @@ impl PluginRegistry {
         registry.register(Box::new(go::GoPlugin));
         registry.register(Box::new(java::JavaPlugin));
         registry.register(Box::new(js::JsPlugin));
+        registry.register(Box::new(python::PythonPlugin));
         registry.register(Box::new(rust::RustPlugin));
         registry
     }
