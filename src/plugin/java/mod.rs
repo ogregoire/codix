@@ -224,8 +224,8 @@ fn extract_members(
                             symbols.push(symbol);
                         }
                     }
-                    "constructor_declaration" => {
-                        if let Some(symbol) = extract_method(member, source, parent_qualified_name, package, parent_local_id, local_id, SymbolKind::Constructor, import_map) {
+                    "constructor_declaration" | "compact_constructor_declaration" => {
+                        if let Some(symbol) = extract_constructor(member, type_node, source, parent_qualified_name, package, parent_local_id, local_id, import_map) {
                             symbols.push(symbol);
                         }
                     }
@@ -333,6 +333,59 @@ fn extract_method(
         parent_local_id: Some(parent_local_id),
         package: package.to_string(),
         type_text,
+    })
+}
+
+fn extract_constructor(
+    node: tree_sitter::Node,
+    type_node: tree_sitter::Node,
+    source: &[u8],
+    parent_qualified_name: &str,
+    package: &str,
+    parent_local_id: usize,
+    local_id: usize,
+    _import_map: &HashMap<String, String>,
+) -> Option<ExtractedSymbol> {
+    let name = node
+        .child_by_field_name("name")
+        .and_then(|n| n.utf8_text(source).ok())
+        .map(|s| s.to_string())?;
+
+    let visibility = extract_visibility(node, source);
+    let start = node.start_position();
+    let end = node.end_position();
+
+    // For compact constructors, parameters come from the record declaration
+    let params_owner = if node.kind() == "compact_constructor_declaration" { type_node } else { node };
+    let param_types = {
+        let mut result = String::new();
+        let mut cursor = params_owner.walk();
+        for child in params_owner.children(&mut cursor) {
+            if child.kind() == "formal_parameters" {
+                result = extract_formal_params(child, source);
+                break;
+            }
+        }
+        result
+    };
+
+    let signature = format!("{}({})", name, param_types);
+    let qualified_name = format!("{}.{}", parent_qualified_name, signature);
+
+    Some(ExtractedSymbol {
+        local_id,
+        name,
+        signature: Some(signature),
+        qualified_name,
+        kind: SymbolKind::Constructor,
+        visibility,
+        line: (start.row + 1) as i64,
+        column: start.column as i64,
+        end_line: (end.row + 1) as i64,
+        end_column: end.column as i64,
+        parent_local_id: Some(parent_local_id),
+        package: package.to_string(),
+        type_text: None,
     })
 }
 
@@ -509,7 +562,7 @@ fn extract_body_relationships(
                     });
                 }
             }
-            "method_declaration" | "constructor_declaration" => {
+            "method_declaration" | "constructor_declaration" | "compact_constructor_declaration" => {
                 let method_local_id = symbols.iter()
                     .find(|s| (s.kind == SymbolKind::Method || s.kind == SymbolKind::Constructor)
                         && s.parent_local_id == Some(type_local_id)
@@ -1216,5 +1269,28 @@ mod tests {
         let method = result.symbols.iter().find(|s| s.kind == SymbolKind::Method).unwrap();
         assert_eq!(annots[0].source_local_id, method.local_id);
         assert_eq!(annots[0].target_qualified_name, "com.bar.NotNull");
+    }
+
+    #[test]
+    fn test_record_compact_constructor() {
+        let source = "package com.foo;\npublic record Point(int x, int y) {\n  Point {\n    if (x < 0) throw new IllegalArgumentException();\n  }\n}";
+        let result = parse_java(source);
+        assert_eq!(result.symbols.len(), 2);
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        assert_eq!(ctor.name, "Point");
+        assert_eq!(ctor.signature, Some("Point(int,int)".to_string()));
+        assert_eq!(ctor.qualified_name, "com.foo.Point.Point(int,int)");
+        assert_eq!(ctor.parent_local_id, Some(0));
+    }
+
+    #[test]
+    fn test_record_canonical_constructor() {
+        let source = "package com.foo;\npublic record Point(int x, int y) {\n  Point(int x, int y) {\n    this.x = x;\n    this.y = y;\n  }\n}";
+        let result = parse_java(source);
+        assert_eq!(result.symbols.len(), 2);
+        let ctor = result.symbols.iter().find(|s| s.kind == SymbolKind::Constructor).unwrap();
+        assert_eq!(ctor.name, "Point");
+        assert_eq!(ctor.signature, Some("Point(int,int)".to_string()));
+        assert_eq!(ctor.qualified_name, "com.foo.Point.Point(int,int)");
     }
 }

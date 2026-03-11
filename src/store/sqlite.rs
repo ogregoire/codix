@@ -265,7 +265,7 @@ impl Store for SqliteStore {
             "SELECT s.id, s.name, s.signature, s.kind, s.qualified_name, s.visibility, \
              s.file_id, s.line, s.column_, s.end_line, s.end_column, s.parent_symbol_id, s.package, f.path as file_path \
              FROM symbols s JOIN files f ON s.file_id = f.id \
-             WHERE (s.name LIKE ?1{collate} ESCAPE '\\' OR s.qualified_name LIKE ?2{collate} ESCAPE '\\')"
+             WHERE (s.name LIKE ?1{collate} ESCAPE '\\' OR s.qualified_name LIKE ?2{collate} ESCAPE '\\' OR s.signature LIKE ?1{collate} ESCAPE '\\')"
         );
 
         let mut sql = base;
@@ -289,13 +289,16 @@ impl Store for SqliteStore {
 
         // Apply precise glob matching to filter out SQL LIKE over-matches
         let results = rows.into_iter().filter(|sym| {
+            let sig = sym.signature.as_deref().unwrap_or("");
             if case_insensitive {
                 let pat_lower = pattern.to_lowercase();
                 glob_match::glob_match(&pat_lower, &sym.name.to_lowercase())
                     || glob_match::glob_match(&pat_lower, &sym.qualified_name.to_lowercase())
+                    || glob_match::glob_match(&pat_lower, &sig.to_lowercase())
             } else {
                 glob_match::glob_match(&pattern, &sym.name)
                     || glob_match::glob_match(&pattern, &sym.qualified_name)
+                    || glob_match::glob_match(&pattern, sig)
             }
         }).collect();
 

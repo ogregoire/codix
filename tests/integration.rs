@@ -406,6 +406,32 @@ public class Service {
 }
 
 #[test]
+fn test_record_compact_constructor() {
+    let tmp = TempDir::new().unwrap();
+    fs::create_dir_all(tmp.path().join("src")).unwrap();
+    fs::write(
+        tmp.path().join("src/Point.java"),
+        r#"package com.foo;
+public record Point(int x, int y) {
+    Point {
+        if (x < 0) throw new IllegalArgumentException();
+    }
+}
+"#,
+    ).unwrap();
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/Point.java"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("record"), "should contain Point record");
+    assert!(stdout.contains("constructor"), "should contain compact constructor");
+    assert!(stdout.contains("Point(int,int)"), "compact constructor should have record's parameters");
+}
+
+#[test]
 fn test_help_shows_all_commands() {
     let tmp = TempDir::new().unwrap();
     let out = codix_cmd(tmp.path()).arg("--help").output().unwrap();
