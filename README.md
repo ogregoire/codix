@@ -11,7 +11,7 @@ cargo install --path .
 ## Quick Start
 
 ```bash
-cd your-java-project
+cd your-project
 codix init          # Creates .codix/ and indexes all source files
 codix find UserService
 codix refs UserService
@@ -24,6 +24,8 @@ codix impls Repository
 |---------|-------------|
 | `codix init` | Initialize project and index all files |
 | `codix index` | Full reindex (drop and rebuild) |
+| `codix status` | Show index statistics (file count per language) |
+| `codix config` | Get or set configuration values (e.g. `index.languages`) |
 | `codix find <pattern>` | Find symbol definitions |
 | `codix refs <pattern>` | Find symbols that reference a given symbol (extends, implements, calls, field types, annotations) |
 | `codix impls <pattern>` | Find implementations/subclasses |
@@ -42,7 +44,7 @@ When multiple symbols match a pattern, codix shows each match with a copy-pastea
 | `-v`, `--verbose` | Show diagnostic info (files reindexed, timing) |
 | `-f`, `--format text\|json` | Output format (default: text) |
 | `-i`, `--case-insensitive` | Case-insensitive pattern matching |
-| `-k`, `--kind <kind>` | Filter by symbol kind (class, interface, enum, record, annotation, method, field, constructor) |
+| `-k`, `--kind <kind>` | Filter by symbol kind (class, interface, enum, record, annotation, method, field, constructor, function, struct) |
 
 ## Patterns
 
@@ -75,7 +77,7 @@ src/main/java/com/foo/UserService.java:6  public method save(Person)
 
 ## Language Support
 
-Currently supported: **Java**
+Currently supported: **Java**, **JavaScript/TypeScript**, **Go**
 
 The architecture uses a plugin trait (`LanguagePlugin`) that makes adding new languages straightforward — each language provides its tree-sitter grammar and symbol extraction logic.
 

@@ -81,10 +81,13 @@ src/
 ├── engine/
 │   ├── mod.rs
 │   ├── project.rs        # Project root detection (.codix/), path utilities
-│   └── indexer.rs        # Full index, incremental reindex, file discovery
+│   ├── indexer.rs        # Full index, incremental reindex, file discovery
+│   └── config.rs         # Config system (.codix/config.toml), language filtering
 └── plugin/
     ├── mod.rs            # LanguagePlugin trait, PluginRegistry
-    └── java/mod.rs       # Java plugin (tree-sitter symbol + relationship extraction)
+    ├── java/mod.rs       # Java plugin (tree-sitter symbol + relationship extraction)
+    ├── js/mod.rs          # JavaScript/TypeScript plugin (tree-sitter extraction)
+    └── go/mod.rs          # Go plugin (struct, interface, function, method extraction)
 ```
 
 ### Key Patterns
@@ -100,14 +103,16 @@ src/
 - Columns: 0-based
 - Paths: stored relative to project root, displayed relative to CWD
 - `RelationshipKind::as_str()` uses kebab-case (e.g. `"field-type"`, `"annotated-by"`) — matches serde serialization
+- `SymbolKind` and `Visibility` are string wrappers (not enums) — plugins define their own values
 - Method signatures: `name(Type1,Type2)` — no spaces, no parameter names
 - Method qualified names include the signature: `com.foo.UserService.save(Person)`
 - Always use lowercase `codix` (never `Codix`)
+- Plugins decide which files they handle via `can_handle()` — no central file extension registry
 
 ### Testing
 
-- Unit tests: `cargo test` (83 tests in `src/`)
-- Integration tests: `cargo test --test integration` (22 tests in `tests/`)
+- Unit tests: `cargo test` (114 tests in `src/`)
+- Integration tests: `cargo test --test integration` (29 tests in `tests/`)
 - `test-project/` contains sample Java files for manual testing
 - After manual testing, clean up: `rm -rf test-project/.codix`
 
