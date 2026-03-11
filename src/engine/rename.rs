@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use anyhow::Result;
 use crate::model::*;
-use crate::plugin::{LanguagePlugin, PluginRegistry};
+use crate::plugin::PluginRegistry;
 use crate::store::Store;
 use serde::Serialize;
 
