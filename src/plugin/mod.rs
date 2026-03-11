@@ -47,4 +47,16 @@ impl PluginRegistry {
             .map(|p| p.display_name().to_string())
             .unwrap_or_else(|| name.to_string())
     }
+
+    pub fn all_language_names(&self) -> Vec<&str> {
+        self.plugins.iter().map(|p| p.name()).collect()
+    }
+
+    pub fn extensions_for_languages(&self, languages: &[String]) -> Vec<&str> {
+        self.plugins.iter()
+            .filter(|p| languages.iter().any(|l| l == p.name()))
+            .flat_map(|p| p.file_extensions())
+            .copied()
+            .collect()
+    }
 }

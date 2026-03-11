@@ -6,7 +6,7 @@ mod store;
 
 use clap::Parser;
 use cli::{Cli, Commands, Format};
-use engine::{indexer, project};
+use engine::{config, indexer, project};
 use engine::indexer::ReindexStats;
 use model::{Symbol, SymbolKind, SymbolQuery};
 use plugin::PluginRegistry;
@@ -27,9 +27,10 @@ fn main() {
 fn run(cli: Cli) -> anyhow::Result<()> {
     let verbose = cli.verbose;
     match cli.command {
-        Commands::Init => cmd_init(verbose),
+        Commands::Init { configs } => cmd_init(verbose, configs),
         Commands::Index => cmd_index(verbose),
         Commands::Status => cmd_status(verbose),
+        Commands::Config { key, value, remove, all } => cmd_config(key, value, remove, all),
         Commands::Find {
             pattern,
             format,
@@ -76,13 +77,32 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     }
 }
 
-fn cmd_init(verbose: bool) -> anyhow::Result<()> {
+fn cmd_init(verbose: bool, configs: Vec<String>) -> anyhow::Result<()> {
     let cwd = env::current_dir()?;
-    project::init_project(&cwd)?;
-    let store = SqliteStore::open(&project::db_path(&cwd).to_string_lossy())?;
+
+    // Parse and validate configs before creating the project
     let registry = PluginRegistry::new();
+    let mut parsed_configs = Vec::new();
+    for pair in configs.chunks(2) {
+        let key = &pair[0];
+        let val = &pair[1];
+        let (section, name) = key.split_once('.')
+            .ok_or_else(|| anyhow::anyhow!("Invalid config key '{}'. Use section.key format (e.g. index.languages)", key))?;
+        if section == "index" && name == "languages" {
+            validate_languages(&registry, val)?;
+        }
+        parsed_configs.push((section.to_string(), name.to_string(), val.to_string()));
+    }
+
+    project::init_project(&cwd)?;
+    for (section, name, val) in &parsed_configs {
+        config::write_value(&cwd, section, name, val)?;
+    }
+
+    let store = SqliteStore::open(&project::db_path(&cwd).to_string_lossy())?;
+    let languages = load_languages(&cwd, &registry)?;
     let start = std::time::Instant::now();
-    let counts = indexer::full_index(&cwd, &store, &registry)?;
+    let counts = indexer::full_index(&cwd, &store, &registry, languages.as_deref())?;
     println!("Initialized codix project in {}", cwd.display());
     print_index_counts(&counts);
     if verbose {
@@ -96,8 +116,9 @@ fn cmd_index(verbose: bool) -> anyhow::Result<()> {
     let root = project::find_project_root(&cwd)?;
     let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
+    let languages = load_languages(&root, &registry)?;
     let start = std::time::Instant::now();
-    let counts = indexer::full_index(&root, &store, &registry)?;
+    let counts = indexer::full_index(&root, &store, &registry, languages.as_deref())?;
     print_index_counts(&counts);
     if verbose {
         eprintln!("[verbose] full index in {}ms", start.elapsed().as_millis());
@@ -296,7 +317,8 @@ fn open_store_and_reindex(verbose: bool) -> anyhow::Result<(SqliteStore, PathBuf
     let root = project::find_project_root(&cwd)?;
     let store = SqliteStore::open(&project::db_path(&root).to_string_lossy())?;
     let registry = PluginRegistry::new();
-    let stats = indexer::incremental_reindex(&root, &store, &registry)?;
+    let languages = load_languages(&root, &registry)?;
+    let stats = indexer::incremental_reindex(&root, &store, &registry, languages.as_deref())?;
     if verbose {
         print_reindex_stats(&stats);
     }
@@ -322,4 +344,94 @@ fn print_reindex_stats(stats: &ReindexStats) {
         "[verbose] reindexed in {}ms ({} added, {} modified, {} deleted, {} unchanged)",
         stats.elapsed_ms, stats.added.len(), stats.modified.len(), stats.deleted.len(), stats.unchanged
     );
+}
+
+fn cmd_config(key: Option<String>, value: Option<String>, remove: bool, all: bool) -> anyhow::Result<()> {
+    let cwd = env::current_dir()?;
+    let root = project::find_project_root(&cwd)?;
+
+    if all {
+        for (k, v) in config::read_all(&root)? {
+            println!("{} {}", k, v);
+        }
+        return Ok(());
+    }
+
+    let key = match key {
+        Some(k) => k,
+        None => {
+            // No key provided — print help by re-running with --help
+            use clap::CommandFactory;
+            let mut cmd = Cli::command();
+            let sub = cmd.find_subcommand_mut("config").unwrap();
+            sub.print_help()?;
+            return Ok(());
+        }
+    };
+
+    let (section, name) = key.split_once('.')
+        .ok_or_else(|| anyhow::anyhow!("Invalid config key '{}'. Use section.key format (e.g. index.languages)", key))?;
+
+    if remove {
+        config::remove_value(&root, section, name)?;
+        return Ok(());
+    }
+
+    match value {
+        Some(val) => {
+            if section == "index" && name == "languages" {
+                let registry = PluginRegistry::new();
+                validate_languages(&registry, &val)?;
+            }
+            config::write_value(&root, section, name, &val)?;
+        }
+        None => {
+            let val = config::read_value(&root, section, name)?;
+            if section == "index" && name == "languages" {
+                if let Some(ref v) = val {
+                    let registry = PluginRegistry::new();
+                    validate_languages(&registry, v)?;
+                }
+            }
+            match val {
+                Some(v) => println!("{}", v),
+                None => {}
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_languages(registry: &PluginRegistry, raw: &str) -> anyhow::Result<()> {
+    let all = registry.all_language_names();
+    let requested: Vec<&str> = raw.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let valid: Vec<&str> = requested.iter().filter(|l| all.contains(l)).copied().collect();
+    let invalid: Vec<&str> = requested.iter().filter(|l| !all.contains(l)).copied().collect();
+
+    if !invalid.is_empty() {
+        let supported = all.join(", ");
+        let example = if valid.is_empty() {
+            format!("codix config index.languages {}", all.join(","))
+        } else {
+            format!("codix config index.languages {}", valid.join(","))
+        };
+        anyhow::bail!(
+            "Unsupported {}: '{}'\n\nSupported languages: {}\n\nExample: {}",
+            if invalid.len() == 1 { "language" } else { "languages" },
+            invalid.join("', '"),
+            supported,
+            example
+        );
+    }
+    Ok(())
+}
+
+fn load_languages(root: &std::path::Path, registry: &PluginRegistry) -> anyhow::Result<Option<Vec<String>>> {
+    match config::configured_languages(root)? {
+        None => Ok(None),
+        Some(langs) => {
+            validate_languages(registry, &langs.join(","))?;
+            Ok(Some(langs))
+        }
+    }
 }

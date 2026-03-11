@@ -24,9 +24,12 @@ fn compute_sha256(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Discover all files the registry can handle.
-pub fn discover_files(root: &Path, registry: &PluginRegistry) -> Vec<(PathBuf, String)> {
-    let extensions = registry.all_extensions();
+/// Discover all files the registry can handle, optionally filtered by language.
+pub fn discover_files(root: &Path, registry: &PluginRegistry, languages: Option<&[String]>) -> Vec<(PathBuf, String)> {
+    let extensions = match languages {
+        Some(langs) => registry.extensions_for_languages(langs),
+        None => registry.all_extensions(),
+    };
     let mut result = Vec::new();
     for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
         let path = entry.path();
@@ -42,9 +45,9 @@ pub fn discover_files(root: &Path, registry: &PluginRegistry) -> Vec<(PathBuf, S
 
 /// Full reindex: clear everything, re-parse all files.
 /// Returns a map of language name → file count, sorted alphabetically.
-pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<BTreeMap<String, u64>> {
+pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry, languages: Option<&[String]>) -> Result<BTreeMap<String, u64>> {
     store.clear_all()?;
-    let files = discover_files(root, registry);
+    let files = discover_files(root, registry, languages);
     store.begin_transaction()?;
     let mut counts: BTreeMap<String, u64> = BTreeMap::new();
     let mut wildcard_map: HashMap<FileId, Vec<String>> = HashMap::new();
@@ -66,9 +69,9 @@ pub fn full_index(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> 
 }
 
 /// Incremental reindex: only process new, modified, or deleted files.
-pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegistry) -> Result<ReindexStats> {
+pub fn incremental_reindex(root: &Path, store: &dyn Store, registry: &PluginRegistry, languages: Option<&[String]>) -> Result<ReindexStats> {
     let start = Instant::now();
-    let disk_files = discover_files(root, registry);
+    let disk_files = discover_files(root, registry, languages);
     let indexed_files = store.list_files()?;
 
     let disk_paths: HashSet<String> = disk_files.iter()
@@ -197,7 +200,7 @@ mod tests {
     fn test_discover_files() {
         let (_tmp, root) = setup_project();
         let registry = PluginRegistry::new();
-        let files = discover_files(&root, &registry);
+        let files = discover_files(&root, &registry, None);
         assert_eq!(files.len(), 2);
         assert!(files.iter().all(|(_, ext)| ext == "java"));
     }
@@ -207,7 +210,7 @@ mod tests {
         let (_tmp, root) = setup_project();
         let store = SqliteStore::open(":memory:").unwrap();
         let registry = PluginRegistry::new();
-        let counts = full_index(&root, &store, &registry).unwrap();
+        let counts = full_index(&root, &store, &registry, None).unwrap();
         assert_eq!(counts.values().sum::<u64>(), 2);
         assert_eq!(store.list_files().unwrap().len(), 2);
     }
@@ -217,12 +220,12 @@ mod tests {
         let (_tmp, root) = setup_project();
         let store = SqliteStore::open(":memory:").unwrap();
         let registry = PluginRegistry::new();
-        full_index(&root, &store, &registry).unwrap();
+        full_index(&root, &store, &registry, None).unwrap();
         assert_eq!(store.list_files().unwrap().len(), 2);
 
         fs::write(root.join("src/main/java/com/foo/Baz.java"),
             "package com.foo;\npublic class Baz {}").unwrap();
-        incremental_reindex(&root, &store, &registry).unwrap();
+        incremental_reindex(&root, &store, &registry, None).unwrap();
         assert_eq!(store.list_files().unwrap().len(), 3);
     }
 
@@ -231,11 +234,11 @@ mod tests {
         let (_tmp, root) = setup_project();
         let store = SqliteStore::open(":memory:").unwrap();
         let registry = PluginRegistry::new();
-        full_index(&root, &store, &registry).unwrap();
+        full_index(&root, &store, &registry, None).unwrap();
         assert_eq!(store.list_files().unwrap().len(), 2);
 
         fs::remove_file(root.join("src/main/java/com/foo/Bar.java")).unwrap();
-        incremental_reindex(&root, &store, &registry).unwrap();
+        incremental_reindex(&root, &store, &registry, None).unwrap();
         assert_eq!(store.list_files().unwrap().len(), 1);
     }
 
@@ -249,7 +252,7 @@ mod tests {
         fs::write(root.join("src/main/java/com/bar/Client.java"),
             "package com.bar;\nimport com.foo.*;\npublic class Client extends Foo {}").unwrap();
 
-        full_index(&root, &store, &registry).unwrap();
+        full_index(&root, &store, &registry, None).unwrap();
 
         let query = crate::model::SymbolQuery {
             pattern: "Client".to_string(),
@@ -277,7 +280,7 @@ mod tests {
         fs::write(root.join("src/main/java/com/client/Client.java"),
             "package com.client;\nimport com.foo.*;\nimport com.other.*;\npublic class Client extends Foo {}").unwrap();
 
-        full_index(&root, &store, &registry).unwrap();
+        full_index(&root, &store, &registry, None).unwrap();
 
         let query = crate::model::SymbolQuery {
             pattern: "Client".to_string(),
@@ -296,13 +299,13 @@ mod tests {
         let (_tmp, root) = setup_project();
         let store = SqliteStore::open(":memory:").unwrap();
         let registry = PluginRegistry::new();
-        full_index(&root, &store, &registry).unwrap();
+        full_index(&root, &store, &registry, None).unwrap();
 
         // Sleep to ensure mtime changes (HFS+ has 1s granularity)
         std::thread::sleep(std::time::Duration::from_millis(1500));
         fs::write(root.join("src/main/java/com/foo/Foo.java"),
             "package com.foo;\npublic class Foo {\n  void newMethod() {}\n}").unwrap();
-        incremental_reindex(&root, &store, &registry).unwrap();
+        incremental_reindex(&root, &store, &registry, None).unwrap();
 
         let syms = store.symbols_in_file("src/main/java/com/foo/Foo.java").unwrap();
         assert_eq!(syms.len(), 2); // class + new method
