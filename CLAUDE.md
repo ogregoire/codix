@@ -109,6 +109,16 @@ src/
 - Always use lowercase `codix` (never `Codix`)
 - Plugins decide which files they handle via `can_handle()` — no central file extension registry
 
+### Code Quality
+
+All code must pass these checks before committing:
+
+- `cargo fmt --check` — run `cargo fmt` before committing to auto-fix formatting
+- `cargo clippy -- -D warnings` — no warnings allowed
+- `cargo test` — all tests must pass
+
+CI enforces these on every push and PR.
+
 ### Testing
 
 - Unit tests: `cargo test` (114 tests in `src/`)
