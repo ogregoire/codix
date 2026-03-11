@@ -600,3 +600,88 @@ fn test_go_init_indexes_files() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Indexed 1 Go file"), "stdout was: {}", stdout);
 }
+
+fn setup_rust_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/app.rs"),
+        r#"pub trait Repository {
+    fn save(&self, item: Item);
+    fn find(&self, id: u32) -> Item;
+}
+
+pub struct Item {
+    pub name: String,
+}
+
+pub struct Service {
+    repo: Box<dyn Repository>,
+}
+
+impl Service {
+    pub fn new(repo: Box<dyn Repository>) -> Self {
+        Service { repo }
+    }
+
+    pub fn process(&self) {
+        let item = self.repo.find(1);
+        self.repo.save(item);
+    }
+}
+
+pub enum Status {
+    Active,
+    Inactive { reason: String },
+}
+
+pub type AppResult = Result<String, String>;
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_rust_symbols() {
+    let tmp = TempDir::new().unwrap();
+    setup_rust_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/app.rs"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Repository"), "should contain Repository trait");
+    assert!(stdout.contains("trait"), "should show trait kind");
+    assert!(stdout.contains("Item"), "should contain Item struct");
+    assert!(stdout.contains("Service"), "should contain Service struct");
+    assert!(stdout.contains("process"), "should contain process method");
+    assert!(stdout.contains("Status"), "should contain Status enum");
+    assert!(stdout.contains("Active"), "should contain Active variant");
+    assert!(stdout.contains("Inactive"), "should contain Inactive variant");
+    assert!(stdout.contains("AppResult"), "should contain AppResult type alias");
+    assert!(stdout.contains("type-alias"), "should show type-alias kind");
+}
+
+#[test]
+fn test_rust_field_type_refs() {
+    let tmp = TempDir::new().unwrap();
+    setup_rust_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["refs", "Repository"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+}
+
+#[test]
+fn test_rust_init_indexes_files() {
+    let tmp = TempDir::new().unwrap();
+    setup_rust_project(tmp.path());
+    let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Indexed 1 Rust file"), "stdout was: {}", stdout);
+}
