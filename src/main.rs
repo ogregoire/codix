@@ -14,6 +14,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process;
 use store::sqlite::SqliteStore;
+use serde::Serialize;
 use store::Store;
 
 fn main() {
@@ -74,6 +75,14 @@ fn run(cli: Cli) -> anyhow::Result<()> {
             case_insensitive,
             kind,
         } => cmd_package(pattern, format, case_insensitive, kind, verbose),
+        Commands::Rename {
+            pattern,
+            new_name,
+            apply,
+            format,
+            case_insensitive,
+            kind,
+        } => cmd_rename(pattern, new_name, apply, format, case_insensitive, kind, verbose),
     }
 }
 
@@ -426,4 +435,138 @@ fn load_languages(root: &std::path::Path, registry: &PluginRegistry) -> anyhow::
             Ok(Some(langs))
         }
     }
+}
+
+fn cmd_rename(
+    pattern: String,
+    new_name: String,
+    apply: bool,
+    format: Format,
+    case_insensitive: bool,
+    kind: Option<String>,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    let (store, root) = open_store_and_reindex(verbose)?;
+    let cwd = env::current_dir()?;
+    let registry = PluginRegistry::new();
+    let parsed_kind = parse_kind(kind.clone());
+    let query = SymbolQuery {
+        pattern: pattern.clone(),
+        case_insensitive,
+        kind: parsed_kind,
+    };
+    let matches = store.find_symbol(&query)?;
+
+    if matches.is_empty() {
+        anyhow::bail!("No symbol found matching '{}'. Try: codix find '{}*'", pattern, pattern);
+    }
+    if matches.len() > 1 {
+        let mut flags = String::new();
+        if case_insensitive { flags.push_str(" -i"); }
+        if let Some(k) = &kind { flags.push_str(&format!(" -k '{}'", k.replace('\'', "'\\''"))); }
+        match format {
+            Format::Json => flags.push_str(" -f json"),
+            Format::Text => {}
+        }
+        let mut msg = format!("Multiple symbols match '{}'. Be more specific:\n", pattern);
+        for sym in &matches {
+            let path = project::display_path(&root, &cwd, &sym.file_path);
+            let label = sym.signature.as_deref().unwrap_or(&sym.name);
+            let escaped_name = sym.qualified_name.replace('\'', "'\\''");
+            msg.push_str(&format!(
+                "  {}:{}  {} {} {}\n  \u{2192} codix rename '{}' '{}'{}\n",
+                path, sym.line,
+                sym.visibility.as_str(), sym.kind.as_str(), label,
+                escaped_name, new_name, flags
+            ));
+        }
+        anyhow::bail!("{}", msg.trim_end());
+    }
+
+    let sym = &matches[0];
+    let result = engine::rename::find_occurrences(&root, &store, &registry, sym, &new_name)?;
+
+    // Print warnings
+    for warning in &result.warnings {
+        eprintln!("{}", warning);
+    }
+
+    if result.total_occurrences() == 0 {
+        println!("No occurrences found to rename.");
+        return Ok(());
+    }
+
+    match format {
+        Format::Text => {
+            if apply {
+                engine::rename::apply_rename(&root, &store, sym, &new_name, &result)?;
+                println!("Renamed {} {} in {} {}.",
+                    result.total_occurrences(),
+                    if result.total_occurrences() == 1 { "occurrence" } else { "occurrences" },
+                    result.total_files(),
+                    if result.total_files() == 1 { "file" } else { "files" },
+                );
+            } else {
+                for file_occ in &result.changes {
+                    let path = project::display_path(&root, &cwd, &file_occ.file_path);
+                    for occ in &file_occ.occurrences {
+                        println!("{}:{}:{}  {} \u{2192} {}",
+                            path, occ.line, occ.column,
+                            occ.old_text, new_name,
+                        );
+                    }
+                }
+                println!("\n{} {} in {} {}",
+                    result.total_occurrences(),
+                    if result.total_occurrences() == 1 { "occurrence" } else { "occurrences" },
+                    result.total_files(),
+                    if result.total_files() == 1 { "file" } else { "files" },
+                );
+            }
+        }
+        Format::Json => {
+            if apply {
+                engine::rename::apply_rename(&root, &store, sym, &new_name, &result)?;
+            }
+            #[derive(Serialize)]
+            struct JsonOutput {
+                applied: bool,
+                changes: Vec<JsonChange>,
+                summary: JsonSummary,
+            }
+            #[derive(Serialize)]
+            struct JsonChange {
+                file: String,
+                line: i64,
+                column: i64,
+                old: String,
+                new: String,
+            }
+            #[derive(Serialize)]
+            struct JsonSummary {
+                occurrences: usize,
+                files: usize,
+            }
+            let output = JsonOutput {
+                applied: apply,
+                changes: result.changes.iter().flat_map(|fc| {
+                    let new_name = new_name.clone();
+                    fc.occurrences.iter().map(move |occ| JsonChange {
+                        file: fc.file_path.clone(),
+                        line: occ.line,
+                        column: occ.column,
+                        old: occ.old_text.clone(),
+                        new: new_name.clone(),
+                    })
+                }).collect(),
+                summary: JsonSummary {
+                    occurrences: result.total_occurrences(),
+                    files: result.total_files(),
+                },
+            };
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+    }
+
+    Ok(())
 }

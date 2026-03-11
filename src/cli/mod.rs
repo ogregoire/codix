@@ -151,4 +151,23 @@ pub enum Commands {
         #[arg(short = 'k', long)]
         kind: Option<String>,
     },
+
+    // — Refactoring —
+    /// Rename a symbol across the codebase (dry-run by default, apply with --apply)
+    #[command(display_order = 40)]
+    Rename {
+        /// Symbol name or qualified name (e.g. save, com.foo.UserService.save(Person))
+        pattern: String,
+        /// New name for the symbol
+        new_name: String,
+        /// Apply the rename (default: dry-run only)
+        #[arg(long)]
+        apply: bool,
+        #[arg(short = 'f', long, default_value = "text")]
+        format: Format,
+        #[arg(short = 'i', long)]
+        case_insensitive: bool,
+        #[arg(short = 'k', long)]
+        kind: Option<String>,
+    },
 }
