@@ -685,3 +685,86 @@ fn test_rust_init_indexes_files() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("Indexed 1 Rust file"), "stdout was: {}", stdout);
 }
+
+fn setup_python_project(dir: &std::path::Path) {
+    fs::create_dir_all(dir.join("src")).unwrap();
+    fs::write(
+        dir.join("src/app.py"),
+        r#"from typing import List
+
+
+class Repository:
+    def save(self, item: "Item") -> None:
+        pass
+
+    def find(self, id: int) -> "Item":
+        pass
+
+
+class Item:
+    name: str
+    id: int
+
+
+class Service:
+    repo: Repository
+
+    def __init__(self, repo: Repository):
+        self.repo = repo
+
+    def process(self) -> None:
+        item = self.repo.find(1)
+        self.repo.save(item)
+
+
+@dataclass
+class Config:
+    debug: bool
+"#,
+    ).unwrap();
+}
+
+#[test]
+fn test_python_symbols() {
+    let tmp = TempDir::new().unwrap();
+    setup_python_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["symbols", "src/app.py"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Repository"), "should contain Repository class");
+    assert!(stdout.contains("class"), "should show class kind");
+    assert!(stdout.contains("Item"), "should contain Item class");
+    assert!(stdout.contains("Service"), "should contain Service class");
+    assert!(stdout.contains("__init__"), "should contain constructor");
+    assert!(stdout.contains("constructor"), "should show constructor kind");
+    assert!(stdout.contains("process"), "should contain process method");
+    assert!(stdout.contains("Config"), "should contain Config class");
+}
+
+#[test]
+fn test_python_field_type_refs() {
+    let tmp = TempDir::new().unwrap();
+    setup_python_project(tmp.path());
+    codix_cmd(tmp.path()).arg("init").output().unwrap();
+
+    let out = codix_cmd(tmp.path())
+        .args(["refs", "Repository"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("repo"), "Service.repo should reference Repository via field type");
+}
+
+#[test]
+fn test_python_init_indexes_files() {
+    let tmp = TempDir::new().unwrap();
+    setup_python_project(tmp.path());
+    let out = codix_cmd(tmp.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("Indexed 1 Python file"), "stdout was: {}", stdout);
+}
