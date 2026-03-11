@@ -75,9 +75,9 @@ fn find_package(root: tree_sitter::Node, source: &[u8]) -> String {
 
 fn visibility_from_name(name: &str) -> Visibility {
     if name.starts_with(|c: char| c.is_uppercase()) {
-        Visibility::Public
+        Visibility::new("public")
     } else {
-        Visibility::Private
+        Visibility::new("private")
     }
 }
 
@@ -584,7 +584,7 @@ mod tests {
         assert_eq!(result.symbols[0].name, "Foo");
         assert_eq!(result.symbols[0].kind, SymbolKind::new("struct"));
         assert_eq!(result.symbols[0].qualified_name, "main.Foo");
-        assert_eq!(result.symbols[0].visibility, Visibility::Public);
+        assert_eq!(result.symbols[0].visibility, Visibility::new("public"));
         assert_eq!(result.symbols[1].name, "Name");
         assert_eq!(result.symbols[1].kind, SymbolKind::new("field"));
         assert_eq!(result.symbols[2].name, "Age");
@@ -610,7 +610,7 @@ mod tests {
         assert_eq!(result.symbols[0].name, "main");
         assert_eq!(result.symbols[0].kind, SymbolKind::new("function"));
         assert_eq!(result.symbols[0].qualified_name, "main.main");
-        assert_eq!(result.symbols[0].visibility, Visibility::Private);
+        assert_eq!(result.symbols[0].visibility, Visibility::new("private"));
     }
 
     #[test]
@@ -622,7 +622,7 @@ mod tests {
         assert_eq!(result.symbols[1].name, "Bar");
         assert_eq!(result.symbols[1].kind, SymbolKind::new("method"));
         assert_eq!(result.symbols[1].qualified_name, "main.Foo.Bar");
-        assert_eq!(result.symbols[1].visibility, Visibility::Public);
+        assert_eq!(result.symbols[1].visibility, Visibility::new("public"));
     }
 
     #[test]
@@ -630,9 +630,9 @@ mod tests {
         let result = parse_and_extract(
             "package main\n\ntype foo struct {\n\tname string\n\tAge  int\n}"
         );
-        assert_eq!(result.symbols[0].visibility, Visibility::Private); // foo
-        assert_eq!(result.symbols[1].visibility, Visibility::Private); // name
-        assert_eq!(result.symbols[2].visibility, Visibility::Public);  // Age
+        assert_eq!(result.symbols[0].visibility, Visibility::new("private")); // foo
+        assert_eq!(result.symbols[1].visibility, Visibility::new("private")); // name
+        assert_eq!(result.symbols[2].visibility, Visibility::new("public"));  // Age
     }
 
     #[test]

@@ -16,33 +16,16 @@ impl SymbolKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Visibility {
-    Public,
-    Protected,
-    PackagePrivate,
-    Private,
-}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Visibility(String);
 
 impl Visibility {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Visibility::Public => "public",
-            Visibility::Protected => "protected",
-            Visibility::PackagePrivate => "package-private",
-            Visibility::Private => "private",
-        }
+    pub fn new(s: &str) -> Self {
+        Visibility(s.to_string())
     }
 
-    pub fn parse_visibility(s: &str) -> Option<Visibility> {
-        match s {
-            "public" => Some(Visibility::Public),
-            "protected" => Some(Visibility::Protected),
-            "package-private" => Some(Visibility::PackagePrivate),
-            "private" => Some(Visibility::Private),
-            _ => None,
-        }
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
@@ -151,8 +134,8 @@ mod tests {
 
     #[test]
     fn test_visibility_display() {
-        assert_eq!(Visibility::Public.as_str(), "public");
-        assert_eq!(Visibility::PackagePrivate.as_str(), "package-private");
+        assert_eq!(Visibility::new("public").as_str(), "public");
+        assert_eq!(Visibility::new("package-private").as_str(), "package-private");
     }
 
 }

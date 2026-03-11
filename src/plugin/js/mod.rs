@@ -113,7 +113,7 @@ fn extract_class(
         signature: None,
         qualified_name: name.clone(),
         kind: SymbolKind::new("class"),
-        visibility: Visibility::Public,
+        visibility: Visibility::new("public"),
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -183,7 +183,7 @@ fn extract_function_declaration(
         signature: Some(format!("{}()", name)),
         qualified_name: name,
         kind: SymbolKind::new("function"),
-        visibility: Visibility::Public,
+        visibility: Visibility::new("public"),
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -218,7 +218,7 @@ fn extract_variable_functions(
                     signature: Some(format!("{}()", name)),
                     qualified_name: name.to_string(),
                     kind: SymbolKind::new("function"),
-                    visibility: Visibility::Public,
+                    visibility: Visibility::new("public"),
                     line: (start.row + 1) as i64,
                     column: start.column as i64,
                     end_line: (end.row + 1) as i64,
@@ -262,7 +262,7 @@ fn extract_method(
         signature: Some(format!("{}()", name)),
         qualified_name,
         kind,
-        visibility: if is_private { Visibility::Private } else { Visibility::Public },
+        visibility: if is_private { Visibility::new("private") } else { Visibility::new("public") },
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -296,7 +296,7 @@ fn extract_field(
         signature: None,
         qualified_name,
         kind: SymbolKind::new("field"),
-        visibility: if is_private { Visibility::Private } else { Visibility::Public },
+        visibility: if is_private { Visibility::new("private") } else { Visibility::new("public") },
         line: (start.row + 1) as i64,
         column: start.column as i64,
         end_line: (end.row + 1) as i64,
@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(result.symbols[0].kind, SymbolKind::new("class"));
         assert_eq!(result.symbols[1].name, "#name");
         assert_eq!(result.symbols[1].kind, SymbolKind::new("field"));
-        assert_eq!(result.symbols[1].visibility, Visibility::Private);
+        assert_eq!(result.symbols[1].visibility, Visibility::new("private"));
         assert_eq!(result.symbols[2].name, "constructor");
         assert_eq!(result.symbols[2].kind, SymbolKind::new("constructor"));
         assert_eq!(result.symbols[3].name, "run");
@@ -367,7 +367,7 @@ mod tests {
         let result = parse_and_extract("class Foo { #secret = 42; }");
         assert_eq!(result.symbols.len(), 2);
         assert_eq!(result.symbols[1].name, "#secret");
-        assert_eq!(result.symbols[1].visibility, Visibility::Private);
+        assert_eq!(result.symbols[1].visibility, Visibility::new("private"));
         assert_eq!(result.symbols[1].qualified_name, "Foo.secret");
     }
 

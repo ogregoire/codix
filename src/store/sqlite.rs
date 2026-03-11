@@ -32,7 +32,7 @@ impl SqliteStore {
             signature: row.get(2)?,
             kind: SymbolKind::new(&kind_str),
             qualified_name: row.get(4)?,
-            visibility: Visibility::parse_visibility(&vis_str).unwrap_or(Visibility::Public),
+            visibility: Visibility::new(&vis_str),
             file_id: row.get(6)?,
             line: row.get(7)?,
             column: row.get(8)?,
@@ -535,7 +535,7 @@ mod tests {
             signature: None,
             qualified_name: "com.foo.Foo".into(),
             kind: SymbolKind::new("class"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None,
             package: "com.foo".into(),
@@ -558,14 +558,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "Foo".into(), signature: None,
                 qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 10, end_column: 1,
                 parent_local_id: None, package: "com.foo".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "bar".into(), signature: Some("bar(String)".into()),
                 qualified_name: "com.foo.Foo.bar(String)".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 3, column: 4, end_line: 5, end_column: 5,
                 parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
             },
@@ -581,7 +581,7 @@ mod tests {
         let syms = vec![ExtractedSymbol {
             local_id: 0, name: "Foo".into(), signature: None,
             qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None, package: "com.foo".into(), type_text: None,
         }];
@@ -615,7 +615,7 @@ mod tests {
         let syms1 = vec![ExtractedSymbol {
             local_id: 0, name: "Foo".into(), signature: None,
             qualified_name: "com.foo.Foo".into(), kind: SymbolKind::new("class"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None, package: "com.foo".into(), type_text: None,
         }];
@@ -623,7 +623,7 @@ mod tests {
         let syms2 = vec![ExtractedSymbol {
             local_id: 0, name: "Bar".into(), signature: None,
             qualified_name: "com.foo.Bar".into(), kind: SymbolKind::new("class"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None, package: "com.foo".into(), type_text: None,
         }];
@@ -647,7 +647,7 @@ mod tests {
         let syms1 = vec![ExtractedSymbol {
             local_id: 0, name: "Repository".into(), signature: None,
             qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None, package: "com.foo".into(), type_text: None,
         }];
@@ -657,7 +657,7 @@ mod tests {
         let syms2 = vec![ExtractedSymbol {
             local_id: 0, name: "UserService".into(), signature: None,
             qualified_name: "com.bar.UserService".into(), kind: SymbolKind::new("class"),
-            visibility: Visibility::Public,
+            visibility: Visibility::new("public"),
             line: 1, column: 0, end_line: 10, end_column: 1,
             parent_local_id: None, package: "com.bar".into(), type_text: None,
         }];
@@ -725,14 +725,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "UserService".into(), signature: None,
                 qualified_name: "com.foo.UserService".into(), kind: SymbolKind::new("class"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 20, end_column: 1,
                 parent_local_id: None, package: "com.foo".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "save".into(), signature: Some("save(Person)".into()),
                 qualified_name: "com.foo.UserService.save(Person)".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 5, column: 4, end_line: 10, end_column: 5,
                 parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
             },
@@ -747,14 +747,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "PersonRepo".into(), signature: None,
                 qualified_name: "com.foo.PersonRepo".into(), kind: SymbolKind::new("interface"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 15, end_column: 1,
                 parent_local_id: None, package: "com.foo".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "findAll".into(), signature: Some("findAll()".into()),
                 qualified_name: "com.foo.PersonRepo.findAll()".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 3, column: 4, end_line: 3, end_column: 30,
                 parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
             },
@@ -875,14 +875,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "Repository".into(), signature: None,
                 qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 5, end_column: 1,
                 parent_local_id: None, package: "com.foo".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "save".into(), signature: Some("save(Object)".into()),
                 qualified_name: "com.foo.Repository.save(Object)".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 3, column: 4, end_line: 3, end_column: 30,
                 parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
             },
@@ -895,14 +895,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "Service".into(), signature: None,
                 qualified_name: "com.bar.Service".into(), kind: SymbolKind::new("class"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 10, end_column: 1,
                 parent_local_id: None, package: "com.bar".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "doWork".into(), signature: Some("doWork()".into()),
                 qualified_name: "com.bar.Service.doWork()".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 5, column: 4, end_line: 8, end_column: 5,
                 parent_local_id: Some(0), package: "com.bar".into(), type_text: None,
             },
@@ -931,14 +931,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "Repository".into(), signature: None,
                 qualified_name: "com.foo.Repository".into(), kind: SymbolKind::new("interface"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 5, end_column: 1,
                 parent_local_id: None, package: "com.foo".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "save".into(), signature: Some("save(Object)".into()),
                 qualified_name: "com.foo.Repository.save(Object)".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 3, column: 4, end_line: 3, end_column: 30,
                 parent_local_id: Some(0), package: "com.foo".into(), type_text: None,
             },
@@ -950,14 +950,14 @@ mod tests {
             ExtractedSymbol {
                 local_id: 0, name: "Service".into(), signature: None,
                 qualified_name: "com.bar.Service".into(), kind: SymbolKind::new("class"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 1, column: 0, end_line: 10, end_column: 1,
                 parent_local_id: None, package: "com.bar".into(), type_text: None,
             },
             ExtractedSymbol {
                 local_id: 1, name: "doWork".into(), signature: Some("doWork()".into()),
                 qualified_name: "com.bar.Service.doWork()".into(), kind: SymbolKind::new("method"),
-                visibility: Visibility::Public,
+                visibility: Visibility::new("public"),
                 line: 5, column: 4, end_line: 8, end_column: 5,
                 parent_local_id: Some(0), package: "com.bar".into(), type_text: None,
             },

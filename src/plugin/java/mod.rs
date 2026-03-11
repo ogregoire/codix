@@ -786,17 +786,17 @@ fn extract_visibility(node: tree_sitter::Node, source: &[u8]) -> Visibility {
         if child.kind() == "modifiers" {
             let text = child.utf8_text(source).unwrap_or("");
             if text.contains("public") {
-                return Visibility::Public;
+                return Visibility::new("public");
             }
             if text.contains("protected") {
-                return Visibility::Protected;
+                return Visibility::new("protected");
             }
             if text.contains("private") {
-                return Visibility::Private;
+                return Visibility::new("private");
             }
         }
     }
-    Visibility::PackagePrivate
+    Visibility::new("package-private")
 }
 
 #[cfg(test)]
@@ -818,7 +818,7 @@ mod tests {
         assert_eq!(result.symbols.len(), 1);
         assert_eq!(result.symbols[0].name, "UserService");
         assert_eq!(result.symbols[0].kind, SymbolKind::new("class"));
-        assert_eq!(result.symbols[0].visibility, Visibility::Public);
+        assert_eq!(result.symbols[0].visibility, Visibility::new("public"));
         assert_eq!(result.symbols[0].package, "com.foo");
         assert_eq!(result.symbols[0].qualified_name, "com.foo.UserService");
     }
@@ -843,9 +843,9 @@ mod tests {
         let result = parse_java(source);
         assert_eq!(result.symbols.len(), 2);
         assert_eq!(result.symbols[0].name, "Main");
-        assert_eq!(result.symbols[0].visibility, Visibility::Public);
+        assert_eq!(result.symbols[0].visibility, Visibility::new("public"));
         assert_eq!(result.symbols[1].name, "Helper");
-        assert_eq!(result.symbols[1].visibility, Visibility::PackagePrivate);
+        assert_eq!(result.symbols[1].visibility, Visibility::new("package-private"));
     }
 
     #[test]
@@ -867,7 +867,7 @@ mod tests {
         assert_eq!(save.parent_local_id, Some(0));
         let count = &result.symbols[2];
         assert_eq!(count.signature, Some("count()".to_string()));
-        assert_eq!(count.visibility, Visibility::Private);
+        assert_eq!(count.visibility, Visibility::new("private"));
     }
 
     #[test]
@@ -889,7 +889,7 @@ mod tests {
         let name_field = &result.symbols[1];
         assert_eq!(name_field.name, "name");
         assert_eq!(name_field.kind, SymbolKind::new("field"));
-        assert_eq!(name_field.visibility, Visibility::Private);
+        assert_eq!(name_field.visibility, Visibility::new("private"));
     }
 
     #[test]
