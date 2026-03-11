@@ -77,6 +77,164 @@ impl LanguagePlugin for JavaPlugin {
             wildcard_imports,
         }
     }
+
+    fn supports(&self, capability: PluginCapability) -> bool {
+        match capability {
+            PluginCapability::Rename => true,
+        }
+    }
+
+    fn find_rename_occurrences(
+        &self,
+        tree: &tree_sitter::Tree,
+        source: &[u8],
+        symbol_name: &str,
+        symbol_kind: &SymbolKind,
+        _symbol_qualified_name: &str,
+    ) -> Result<Vec<RenameOccurrence>, RenameError> {
+        let root = tree.root_node();
+        let mut occurrences = Vec::new();
+        let kind_str = symbol_kind.as_str();
+
+        collect_rename_occurrences(root, source, symbol_name, kind_str, &mut occurrences);
+
+        Ok(occurrences)
+    }
+}
+
+fn collect_rename_occurrences(
+    node: tree_sitter::Node,
+    source: &[u8],
+    target_name: &str,
+    target_kind: &str,
+    occurrences: &mut Vec<RenameOccurrence>,
+) {
+    let node_kind = node.kind();
+    let text = node.utf8_text(source).unwrap_or("");
+
+    // Only check identifier/type_identifier nodes that match the target name
+    if (node_kind == "identifier" || node_kind == "type_identifier") && text == target_name {
+        if let Some(parent) = node.parent() {
+            let parent_kind = parent.kind();
+            let matches = match target_kind {
+                "method" => is_method_occurrence(parent_kind, &node, &parent),
+                "class" | "interface" | "enum" | "record" | "annotation" =>
+                    is_type_occurrence(parent_kind, &node, &parent),
+                "field" | "enum_constant" => is_field_occurrence(parent_kind, &node, &parent, source),
+                "constructor" => is_constructor_occurrence(parent_kind),
+                _ => false,
+            };
+            if matches {
+                occurrences.push(RenameOccurrence {
+                    line: node.start_position().row as i64 + 1,
+                    column: node.start_position().column as i64,
+                    byte_offset: node.start_byte(),
+                    old_text: text.to_string(),
+                });
+            }
+        }
+    }
+
+    // Recurse into children
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_rename_occurrences(child, source, target_name, target_kind, occurrences);
+    }
+}
+
+fn is_method_occurrence(parent_kind: &str, node: &tree_sitter::Node, parent: &tree_sitter::Node) -> bool {
+    match parent_kind {
+        // Declaration
+        "method_declaration" => {
+            parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id())
+        }
+        // Call sites
+        "method_invocation" => {
+            parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id())
+        }
+        "super_method_invocation" => {
+            parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id())
+        }
+        _ => false,
+    }
+}
+
+fn is_type_occurrence(parent_kind: &str, node: &tree_sitter::Node, parent: &tree_sitter::Node) -> bool {
+    match parent_kind {
+        // Declaration
+        "class_declaration" | "interface_declaration" | "enum_declaration"
+        | "record_declaration" | "annotation_type_declaration" => {
+            parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id())
+        }
+        // Constructor (class rename must also rename constructors)
+        "constructor_declaration" => {
+            parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id())
+        }
+        // Import: the simple name at the end of "import com.foo.UserService"
+        // In tree-sitter-java, the import path is a scoped_identifier.
+        // The last identifier child of a scoped_identifier inside an import is the type name.
+        "scoped_identifier" => {
+            is_inside_import(parent) && is_last_identifier_in_scope(node, parent)
+        }
+        // Type usages in specific structural positions
+        "superclass" | "super_interfaces" | "extends_interfaces"
+        | "type_list" | "field_declaration" | "local_variable_declaration"
+        | "formal_parameter" | "spread_parameter" | "catch_formal_parameter"
+        | "object_creation_expression" | "cast_expression" | "instanceof_expression"
+        | "generic_type" | "type_arguments" | "type_parameter" | "type_bound"
+        | "annotation" | "marker_annotation" | "array_creation_expression"
+        | "method_declaration" | "enhanced_for_statement" => {
+            node.kind() == "type_identifier"
+        }
+        "variable_declarator" => false,
+        _ => false,
+    }
+}
+
+fn is_inside_import(node: &tree_sitter::Node) -> bool {
+    let mut current = Some(*node);
+    while let Some(n) = current {
+        if n.kind() == "import_declaration" {
+            return true;
+        }
+        current = n.parent();
+    }
+    false
+}
+
+fn is_last_identifier_in_scope(node: &tree_sitter::Node, parent: &tree_sitter::Node) -> bool {
+    if let Some(last_child) = parent.child_by_field_name("name") {
+        last_child.id() == node.id()
+    } else {
+        let child_count = parent.named_child_count();
+        if child_count > 0 {
+            parent.named_child(child_count - 1).map(|c| c.id()) == Some(node.id())
+        } else {
+            false
+        }
+    }
+}
+
+fn is_field_occurrence(parent_kind: &str, node: &tree_sitter::Node, parent: &tree_sitter::Node, _source: &[u8]) -> bool {
+    match parent_kind {
+        // Declaration: variable_declarator inside field_declaration
+        "variable_declarator" => {
+            if parent.child_by_field_name("name").map(|n| n.id()) == Some(node.id()) {
+                parent.parent().map(|gp| gp.kind()) == Some("field_declaration")
+            } else {
+                false
+            }
+        }
+        // Field access: this.myField, obj.myField
+        "field_access" => {
+            parent.child_by_field_name("field").map(|n| n.id()) == Some(node.id())
+        }
+        _ => false,
+    }
+}
+
+fn is_constructor_occurrence(parent_kind: &str) -> bool {
+    parent_kind == "constructor_declaration"
 }
 
 fn find_package(root: tree_sitter::Node, source: &[u8]) -> String {
