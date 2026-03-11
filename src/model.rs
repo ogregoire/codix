@@ -109,6 +109,34 @@ pub struct ExtractionResult {
     pub wildcard_imports: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginCapability {
+    Rename,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RenameOccurrence {
+    pub line: i64,
+    pub column: i64,
+    pub byte_offset: usize,
+    pub old_text: String,
+}
+
+#[derive(Debug, Clone)]
+pub enum RenameError {
+    NotSupported { language: String },
+}
+
+impl std::fmt::Display for RenameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RenameError::NotSupported { language } => {
+                write!(f, "Rename is not supported for {} files", language)
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SymbolQuery {
     pub pattern: String,
